@@ -276,6 +276,23 @@ Drag the vertical Z handle to cut the model open. Everything above the cut is
 clipped away and the cross-section is drawn in mint. Triangles are binned into
 Z-slabs at load time, so scrubbing only ever touches the slab under the cursor.
 
+**Capped and open sections.** The cut face is filled in by default, so a
+section through solid material reads as solid and a section through a cavity
+reads as a hole. The `Cap` button in the top bar turns the fill off, leaving an
+**open section**: nothing covers the cut, so you look straight down into the
+part and can see internal walls, trapped voids and shells that float below the
+plane. Capped answers "is there material here"; open answers "what is under
+here". They are different questions, which is why both are kept rather than one
+being the correct rendering.
+
+The fill is drawn with the stencil buffer rather than by triangulating the
+cross-section. Every back face behind the plane increments the stencil and
+every front face decrements it, so what is left set is exactly where a ray
+entered the solid and did not leave — the material. A plane drawn through that
+mask is the section, exact for any shape, holes and nested shells included,
+with no polygon stitching to get wrong. It needs a stencil buffer, which
+three.js has not requested by default since r163.
+
 It is called Cutaway, not Slice: in 3D printing "slicing" means generating
 G-code, which Meshlight explicitly does not do (spec §2). The geometry module
 is [`src/core/section.ts`](src/core/section.ts) for the same reason.

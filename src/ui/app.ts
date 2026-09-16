@@ -89,6 +89,7 @@ export function mountApp(root: HTMLElement): void {
   const boxButton = root.querySelector<HTMLButtonElement>('[data-action="box"]')!
   const plateButton = root.querySelector<HTMLButtonElement>('[data-action="plate"]')!
   const partsButton = root.querySelector<HTMLButtonElement>('[data-action="parts"]')!
+  const capButton = root.querySelector<HTMLButtonElement>('[data-action="cap"]')!
   const viewbar = root.querySelector<HTMLElement>('.viewbar')!
   const cubeCanvas = root.querySelector<HTMLCanvasElement>('.viewbar__cube')!
   const plateMenu = root.querySelector<HTMLElement>('[data-menu="plate"]')!
@@ -456,12 +457,13 @@ export function mountApp(root: HTMLElement): void {
   // The controls sit in two places now — the view picker with the cube, the
   // overlay toggles up beside Shaded/Wire — so this listens across the stage
   // and answers only to the actions it owns. `help` also lives here.
-  const VIEW_ACTIONS = new Set(['reset', 'fit', 'parts', 'box', 'plate', 'grid'])
+  const VIEW_ACTIONS = new Set(['reset', 'fit', 'parts', 'box', 'plate', 'grid', 'cap'])
   root.querySelector('.stage')!.addEventListener('click', (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-action]')
     if (!button || !VIEW_ACTIONS.has(button.dataset.action ?? '')) return
     const action = button.dataset.action
-    if (action === 'reset') viewport.resetView()
+    if (action === 'cap') store.set({ capSection: !store.get().capSection })
+    else if (action === 'reset') viewport.resetView()
     else if (action === 'fit') viewport.fitCamera()
     else if (action === 'parts') {
       const on = !store.get().pickParts
@@ -899,6 +901,9 @@ export function mountApp(root: HTMLElement): void {
     viewbar.hidden = !hasModel
     legend.hidden = !hasModel || state.mode === 'cutaway' || state.mode === 'edit'
     cutbar.hidden = !hasModel || state.mode !== 'cutaway'
+    capButton.hidden = cutbar.hidden
+    capButton.setAttribute('aria-pressed', String(state.capSection))
+    viewport.setSectionCap(state.capSection)
     shell.classList.toggle('is-cutaway', hasModel && state.mode === 'cutaway')
 
     if (state.mode !== 'cutaway') {
@@ -1147,6 +1152,10 @@ function shellHtml(): string {
           <button data-view="shaded" aria-pressed="true">Shaded</button>
           <button data-view="wire" aria-pressed="false">Wire</button>
         </div>
+        <!-- Only meaningful while something is cut open, so it appears with
+             the cutaway and not before. -->
+        <button class="iconbtn iconbtn--cap" data-action="cap" aria-pressed="true" hidden
+                aria-label="Cap the cut" data-tip="Cap the cut — fill the section so solid reads solid">${toolIcons.cap}</button>
         <button class="iconbtn" data-action="box" aria-pressed="true"
                 aria-label="Bounding box" data-tip="Bounding box — measured extents">${toolIcons.box}</button>
         <button class="iconbtn" data-action="grid" aria-pressed="true"

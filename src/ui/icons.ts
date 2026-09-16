@@ -47,6 +47,13 @@ export const toolIcons = {
   <rect x="1.5" y="1.5" width="15" height="15" rx="2.5" stroke="currentColor" stroke-width="1.4"/>
   <path d="M6.5 1.5v15M11.5 1.5v15M1.5 6.5h15M1.5 11.5h15" stroke="currentColor" stroke-width="1.2"/>
 </svg>`,
+  cap: `
+<svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+  <path d="M2.5 9.5h13v4.2a1.3 1.3 0 0 1-1.3 1.3H3.8a1.3 1.3 0 0 1-1.3-1.3z" fill="currentColor"/>
+  <path d="M2.5 9.5V4.3A1.3 1.3 0 0 1 3.8 3h10.4a1.3 1.3 0 0 1 1.3 1.3v5.2"
+        stroke="currentColor" stroke-width="1.4"/>
+  <path d="M1 9.5h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+</svg>`,
   reset: `
 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
   <path d="M15.2 9a6.2 6.2 0 1 1-1.9-4.47" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>

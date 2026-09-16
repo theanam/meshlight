@@ -23,6 +23,9 @@ const SHELL_DIM = 0x3a4655
 /** Mint, for geometry the repair added (artboard 2b). */
 const PATCH = 0x6fe3b0
 const SECTION_LINE = 0x6fe3b0
+/** Cut material. A flatter, cooler slate than the outer surface so the
+ *  section reads as the inside of the part rather than more of its skin. */
+const SECTION_CAP = 0x6b7d94
 
 /** Ground grid. Graphite on purpose: a ruler under the part must never read
  *  as a finding, so it stays out of the defect colours and out of mint. */
@@ -72,6 +75,7 @@ export class Viewport {
   private readonly boxGroup = new THREE.Group()
   private readonly plateGroup = new THREE.Group()
   private readonly partGroup = new THREE.Group()
+  private readonly capGroup = new THREE.Group()
 
   private solid: THREE.Mesh | null = null
   private shellHighlight: THREE.Mesh | null = null
@@ -98,7 +102,10 @@ export class Viewport {
   }
 
   constructor(private readonly canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+    // stencil is needed for the section cap and has not defaulted to true
+    // since three r163 — without it the mask is a no-op and the cap covers the
+    // whole plane instead of just the material.
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10_000)
@@ -119,6 +126,7 @@ export class Viewport {
       this.boxGroup,
       this.plateGroup,
       this.partGroup,
+      this.capGroup,
     )
     this.addLighting()
 
@@ -919,18 +927,112 @@ export class Viewport {
     }
   }
 
+  /** Whether the cut face is filled in. Kept so a change of mind can rebuild
+   *  the cap without the caller having to remember the height. */
+  private capped = true
+  private clipZ: number | null = null
+
+  setSectionCap(capped: boolean): void {
+    if (this.capped === capped) return
+    this.capped = capped
+    this.setClipZ(this.clipZ)
+  }
+
   /** Hide everything above the given Z so the cutaway reveals the interior. */
   setClipZ(z: number | null): void {
+    this.clipZ = z
+    this.clearCap()
     const material = this.solid?.material as THREE.MeshStandardMaterial | undefined
     if (!material) return
+
     if (z === null) {
       this.renderer.localClippingEnabled = false
       material.clippingPlanes = null
-    } else {
-      this.renderer.localClippingEnabled = true
-      material.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 0, -1), z)]
+      material.needsUpdate = true
+      return
     }
+
+    this.renderer.localClippingEnabled = true
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), z)
+    material.clippingPlanes = [plane]
     material.needsUpdate = true
+    if (this.capped) this.buildCap(plane, z)
+  }
+
+  /** Fill the cut face, so a section through solid material reads as solid.
+   *
+   *  Clipping alone opens the part up and leaves you looking at the inside of
+   *  the far wall, which is the whole point when you are hunting for voids —
+   *  but it also means a solid block and a hollow shell look identical from
+   *  above, both being a rim with dark inside it.
+   *
+   *  The fill is drawn with the stencil buffer rather than by triangulating
+   *  the cross-section. Every back face behind the plane increments the
+   *  stencil and every front face decrements it, so what is left set is
+   *  exactly where the ray entered the solid and did not leave: the material.
+   *  A plane drawn through that mask is the section, exact for any shape,
+   *  holes and nested shells included, with no polygon stitching to get wrong. */
+  private buildCap(plane: THREE.Plane, z: number): void {
+    const geometry = this.solid?.geometry
+    if (!geometry || !this.bounds) return
+
+    const stencil = new THREE.MeshBasicMaterial({
+      depthWrite: false,
+      depthTest: false,
+      colorWrite: false,
+      stencilWrite: true,
+      stencilFunc: THREE.AlwaysStencilFunc,
+    })
+
+    for (const [side, op] of [
+      [THREE.BackSide, THREE.IncrementWrapStencilOp],
+      [THREE.FrontSide, THREE.DecrementWrapStencilOp],
+    ] as const) {
+      const material = stencil.clone()
+      material.side = side
+      material.clippingPlanes = [plane]
+      material.stencilFail = op
+      material.stencilZFail = op
+      material.stencilZPass = op
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.renderOrder = 1
+      this.capGroup.add(mesh)
+    }
+
+    const [sx, sy] = this.bounds.size
+    const cap = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.max(sx, sy) * 1.6 || 1, Math.max(sx, sy) * 1.6 || 1),
+      new THREE.MeshStandardMaterial({
+        color: SECTION_CAP,
+        roughness: 0.95,
+        metalness: 0,
+        side: THREE.DoubleSide,
+        stencilWrite: true,
+        stencilRef: 0,
+        stencilFunc: THREE.NotEqualStencilFunc,
+        stencilFail: THREE.ReplaceStencilOp,
+        stencilZFail: THREE.ReplaceStencilOp,
+        stencilZPass: THREE.ReplaceStencilOp,
+      }),
+    )
+    cap.position.set(this.bounds.center[0], this.bounds.center[1], z)
+    cap.renderOrder = 2
+    cap.userData.ownsGeometry = true
+    // The mask has to go before the next frame builds its own.
+    cap.onAfterRender = (renderer) => renderer.clearStencil()
+    this.capGroup.add(cap)
+  }
+
+  private clearCap(): void {
+    for (const child of [...this.capGroup.children]) {
+      this.capGroup.remove(child)
+      const mesh = child as THREE.Mesh
+      const material = mesh.material
+      for (const one of Array.isArray(material) ? material : [material]) one.dispose()
+      // The two stencil meshes borrow the model's geometry and must not free
+      // it; only the cap plane made its own.
+      if (mesh.userData.ownsGeometry === true) mesh.geometry.dispose()
+    }
   }
 
   /** Suspend orbiting while a tool owns the pointer.
@@ -1247,6 +1349,7 @@ export class Viewport {
     this.clearModel()
     this.clearSection()
     this.clearRepair()
+    this.clearCap()
     this.clearGround()
     this.clearBox()
     this.buildPartBox(null)

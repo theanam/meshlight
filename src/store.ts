@@ -42,6 +42,9 @@ export interface State {
   selectedInstance: number | null
   /** Height of the cutaway plane, in mm. */
   cutZ: number | null
+  /** Fill the cut face so a section through solid material reads as solid.
+   *  Off leaves the part open, which is how you see down inside it. */
+  capSection: boolean
   busy: boolean
   error: string | null
 
@@ -108,6 +111,7 @@ function initialState(): State {
     expandedIssue: null,
     selectedInstance: null,
     cutZ: null,
+    capSection: true,
     busy: false,
     error: null,
     repairOptions: { ...NO_REPAIRS },
