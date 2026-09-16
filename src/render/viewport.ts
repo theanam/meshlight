@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { orientedFootprint } from '../core/footprint'
+import type { Footprint } from '../core/footprint'
 import type { Bounds } from '../core/types'
 import type { Highlights } from '../worker/protocol'
 
@@ -208,7 +210,86 @@ export class Viewport {
   private buildBox(): void {
     this.clearBox()
     if (!this.bounds) return
-    this.drawBox(this.boxGroup, this.bounds, BOX_LINE, BOX_LABEL)
+    this.frameBox(this.boxGroup, this.bounds, this.footprintFor(null), BOX_LINE, BOX_LABEL)
+  }
+
+  /** Vertex indices to measure a footprint over: every vertex, or just the
+   *  ones a shell uses. */
+  private footprintFor(shellIndex: number | null): Footprint | null {
+    if (!this.meshData) return null
+    const { positions, indices, shellIds } = this.meshData
+    const vertexCount = positions.length / 3
+
+    if (shellIndex === null) {
+      const all = new Uint32Array(vertexCount)
+      for (let v = 0; v < vertexCount; v++) all[v] = v
+      return orientedFootprint(positions, all)
+    }
+
+    const used = new Uint8Array(vertexCount)
+    let count = 0
+    for (let t = 0; t < shellIds.length; t++) {
+      if (shellIds[t] !== shellIndex) continue
+      for (let corner = 0; corner < 3; corner++) {
+        const v = indices[t * 3 + corner]!
+        if (used[v] === 0) {
+          used[v] = 1
+          count++
+        }
+      }
+    }
+    const list = new Uint32Array(count)
+    let n = 0
+    for (let v = 0; v < vertexCount; v++) if (used[v] === 1) list[n++] = v
+    return orientedFootprint(positions, list)
+  }
+
+  /** Put the box in its own frame so it can be turned to sit on the part.
+   *
+   *  Only worth turning when it actually buys something: a part already square
+   *  to the axes would otherwise pick up a fraction of a degree of skew from
+   *  floating point, and a box that is almost straight reads as a mistake. */
+  private frameBox(
+    parent: THREE.Group,
+    bounds: Bounds,
+    footprint: Footprint | null,
+    line: number,
+    label: string,
+  ): void {
+    const axisAlignedArea = bounds.size[0] * bounds.size[1]
+    const turned =
+      footprint !== null &&
+      axisAlignedArea > 0 &&
+      footprint.width * footprint.depth < axisAlignedArea * 0.98
+
+    if (!turned) {
+      this.drawBox(parent, bounds, line, label, null)
+      return
+    }
+
+    const holder = new THREE.Group()
+    holder.position.set(footprint!.center[0], footprint!.center[1], 0)
+    holder.rotation.z = footprint!.angle
+    parent.add(holder)
+
+    // Local frame: the holder carries the turn and the XY offset, so Z stays
+    // world Z and the labels below need no special case for it.
+    const z0 = bounds.min[2]
+    const z1 = bounds.max[2]
+    const halfW = footprint!.width / 2
+    const halfD = footprint!.depth / 2
+    this.drawBox(
+      holder,
+      {
+        min: [-halfW, -halfD, z0],
+        max: [halfW, halfD, z1],
+        size: [footprint!.width, footprint!.depth, z1 - z0],
+        center: [0, 0, (z0 + z1) / 2],
+      },
+      line,
+      label,
+      footprint!.angle,
+    )
   }
 
   /** The box for one picked part, drawn in the selection colour so it reads as
@@ -228,15 +309,32 @@ export class Viewport {
     })
   }
 
-  private buildPartBox(bounds: Bounds | null): void {
+  private buildPartBox(shellIndex: number | null): void {
     for (const child of [...this.partGroup.children]) {
       this.partGroup.remove(child)
       disposeObject(child)
     }
-    if (bounds) this.drawBox(this.partGroup, bounds, PART_BOX_LINE, PART_BOX_LABEL)
+    if (shellIndex === null) return
+    const bounds = this.shellBounds(shellIndex)
+    if (!bounds) return
+    this.frameBox(
+      this.partGroup,
+      bounds,
+      this.footprintFor(shellIndex),
+      PART_BOX_LINE,
+      PART_BOX_LABEL,
+    )
   }
 
-  private drawBox(group: THREE.Group, bounds: Bounds, line: number, label: string): void {
+  private drawBox(
+    group: THREE.Group,
+    bounds: Bounds,
+    line: number,
+    label: string,
+    /** Radians the box has been turned about Z, or null if it is axis-aligned.
+     *  A turned box is no longer measuring X and Y, so its labels say so. */
+    turn: number | null,
+  ): void {
     const [x0, y0, z0] = bounds.min
     const [x1, y1, z1] = bounds.max
     const corners: [number, number, number][] = [
@@ -295,7 +393,9 @@ export class Viewport {
     const V = THREE.Vector3
     this.addEdgeLabel(
       group,
-      `X ${fmtDim(sx)}`,
+      turn === null
+        ? `X ${fmtDim(sx)}`
+        : `X\u2032 ${fmtDim(sx)} @ ${((turn * 180) / Math.PI).toFixed(1)}\u00b0`,
       new V(cx, y0 - gap, z0),
       new V(1, 0, 0),
       new V(0, 1, 0),
@@ -304,7 +404,7 @@ export class Viewport {
     )
     this.addEdgeLabel(
       group,
-      `Y ${fmtDim(sy)}`,
+      turn === null ? `Y ${fmtDim(sy)}` : `Y\u2032 ${fmtDim(sy)}`,
       new V(x1 + gap, cy, z0),
       new V(0, 1, 0),
       new V(-1, 0, 0),
@@ -933,7 +1033,7 @@ export class Viewport {
   highlightShell(shellIndex: number | null): void {
     // The box belongs to the selection, so it is drawn and cleared here
     // rather than by a second call the two could get out of step on.
-    this.buildPartBox(shellIndex === null ? null : this.shellBounds(shellIndex))
+    this.buildPartBox(shellIndex)
     this.dimModelBox(shellIndex !== null)
 
     if (this.shellHighlight) {

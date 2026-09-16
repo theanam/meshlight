@@ -5,6 +5,7 @@
 import { analyseMesh } from '../src/core/analysis'
 import { indexMesh } from '../src/core/indexer'
 import { scoreMesh } from '../src/core/score'
+import { orientedFootprint } from '../src/core/footprint'
 import { buildZBuckets, sectionAt } from '../src/core/section'
 // Aliased: this file has its own toBinaryStl fixture helper.
 import { repairMesh, toBinaryStl as exportStl } from '../src/core/repair'
@@ -721,6 +722,50 @@ console.log('\nmalformed input')
   check('empty file', bad(new ArrayBuffer(0)), 'MeshParseError')
   check('tiny file', bad(new ArrayBuffer(4)), 'MeshParseError')
   check('random bytes', bad(new TextEncoder().encode('this is not an stl at all').buffer as ArrayBuffer), 'MeshParseError')
+}
+
+// ---------------------------------------------------------------------------
+// Oriented footprint
+// ---------------------------------------------------------------------------
+
+{
+  console.log('\noriented footprint: the box follows the part, not the axes')
+
+  /** Four corners of a w x d rectangle, turned `deg` about Z and moved off
+   *  the origin so a wrong centre cannot pass by landing on (0, 0). */
+  function turnedRect(w: number, d: number, deg: number): Float32Array {
+    const a = (deg * Math.PI) / 180
+    const out = new Float32Array(12)
+    const corners: [number, number][] = [
+      [-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2],
+    ]
+    corners.forEach(([x, y], i) => {
+      out[i * 3] = 12 + x * Math.cos(a) - y * Math.sin(a)
+      out[i * 3 + 1] = -5 + x * Math.sin(a) + y * Math.cos(a)
+    })
+    return out
+  }
+  const corners = Uint32Array.from([0, 1, 2, 3])
+  const round = (n: number): number => Math.round(n * 100) / 100
+  const sides = (w: number, d: number, deg: number): number[] => {
+    const f = orientedFootprint(turnedRect(w, d, deg), corners)!
+    return [round(f.width), round(f.depth)].sort((a, b) => b - a)
+  }
+  const degrees = (w: number, d: number, deg: number): number =>
+    round((orientedFootprint(turnedRect(w, d, deg), corners)!.angle * 180) / Math.PI)
+
+  check('square to the axes', sides(200, 30, 0), [200, 30])
+  check('turned 30 degrees', sides(200, 30, 30), [200, 30])
+  // The case that started this: axis-aligned extents say 155 x 155.
+  check('turned 45 degrees', sides(200, 30, 45), [200, 30])
+  check('angle found', degrees(200, 30, 30), 30)
+  // A rectangle is itself again every quarter turn, so this is 0, not 90.
+  check('quarter turn folds to zero', degrees(200, 30, 90), 0)
+  check('centre is the rectangle, not the origin', (() => {
+    const f = orientedFootprint(turnedRect(200, 30, 45), corners)!
+    return [round(f.center[0]), round(f.center[1])]
+  })(), [12, -5])
+  check('no points, no footprint', orientedFootprint(new Float32Array(0), new Uint32Array(0)), null)
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`)
