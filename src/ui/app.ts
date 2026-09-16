@@ -6,6 +6,7 @@ import type { Mode } from '../store'
 import { NO_REPAIRS, saveSettings, store } from '../store'
 import type { WorkerRequest, WorkerResponse } from '../worker/protocol'
 import { markSvg, railIcons, toolIcons } from './icons'
+import { PLATE_PRESETS, findPlate, plateLabel } from './plates'
 import {
   filterIssues,
   renderBreakdown,
@@ -69,6 +70,8 @@ export function mountApp(root: HTMLElement): void {
   const segmented = root.querySelector<HTMLElement>('.segmented:not(.segmented--compare)')!
   const gridButton = root.querySelector<HTMLButtonElement>('[data-action="grid"]')!
   const boxButton = root.querySelector<HTMLButtonElement>('[data-action="box"]')!
+  const plateButton = root.querySelector<HTMLButtonElement>('[data-action="plate"]')!
+  const plateMenu = root.querySelector<HTMLElement>('[data-menu="plate"]')!
   const compare = root.querySelector<HTMLElement>('.segmented--compare')!
 
   const viewport = new Viewport(canvas)
@@ -144,7 +147,10 @@ export function mountApp(root: HTMLElement): void {
 
       case 'loaded': {
         const payload = message.payload
-        viewport.setBuildVolume(store.get().settings.buildVolume)
+        viewport.setBuildVolume(
+          store.get().settings.buildVolume,
+          plateLabel(store.get().settings.platePreset),
+        )
         viewport.setModel(payload.positions, payload.indices, payload.bounds, payload.shellIds)
         viewport.setHighlights(payload.highlights)
         viewport.highlightShell(null)
@@ -252,7 +258,17 @@ export function mountApp(root: HTMLElement): void {
     const action = button.dataset.action
     if (action === 'fit') viewport.fitCamera()
     else if (action === 'box') store.set({ showBox: !store.get().showBox })
-    else store.set({ showGrid: !store.get().showGrid })
+    else if (action === 'plate') {
+      // Nothing to show until a bed has been chosen, so the first press opens
+      // the menu rather than toggling a plate that does not exist yet.
+      if (store.get().settings.platePreset === 'none') openPlateMenu()
+      else {
+        store.set({ showPlate: !store.get().showPlate })
+        // Pull the bed into frame on the way in, and back to the part on the
+        // way out. Either way the press has a visible result.
+        viewport.fitCamera()
+      }
+    } else store.set({ showGrid: !store.get().showGrid })
   })
 
   compare.addEventListener('click', (event) => {
@@ -261,6 +277,64 @@ export function mountApp(root: HTMLElement): void {
     const show = button.dataset.compare === 'after'
     store.set({ showRepair: show })
     viewport.showRepair(show)
+  })
+
+  // ---- build plate menu -----------------------------------------------
+
+  function openPlateMenu(): void {
+    const chosen = store.get().settings.platePreset
+    plateMenu.querySelectorAll<HTMLButtonElement>('[data-plate]').forEach((item) =>
+      item.setAttribute('aria-checked', String(item.dataset.plate === chosen)),
+    )
+    plateMenu.hidden = false
+    plateButton.setAttribute('aria-expanded', 'true')
+  }
+
+  function closePlateMenu(): void {
+    plateMenu.hidden = true
+    plateButton.setAttribute('aria-expanded', 'false')
+  }
+
+  plateButton.addEventListener('contextmenu', (event) => {
+    event.preventDefault()
+    if (plateMenu.hidden) openPlateMenu()
+    else closePlateMenu()
+  })
+
+  plateMenu.addEventListener('click', (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-plate]')
+    if (!item) return
+    const choice = item.dataset.plate!
+    closePlateMenu()
+
+    // A preset carries its own volume; Custom keeps whatever is in Setup and
+    // takes you there to edit it. Either way the plate comes on, because
+    // picking a bed and seeing nothing happen is not an answer.
+    const preset = findPlate(choice)
+    const settings: Settings = {
+      ...store.get().settings,
+      platePreset: choice,
+      buildVolume: preset ? [...preset.volume] : store.get().settings.buildVolume,
+    }
+    store.set({ settings, showPlate: choice !== 'none' })
+    if (choice === 'custom') store.set({ mode: 'setup' })
+    saveSettings(settings)
+    viewport.setBuildVolume(settings.buildVolume, plateLabel(choice))
+    viewport.setPlateVisible(choice !== 'none')
+    viewport.fitCamera()
+    // The volume feeds the fits-on-plate component, so the score has to catch up.
+    if (preset && store.get().model) send({ type: 'rescore', settings })
+  })
+
+  // Dismiss on anything that is not the menu or the button that opened it.
+  document.addEventListener('click', (event) => {
+    const target = event.target as Node
+    if (!plateMenu.hidden && !plateMenu.contains(target) && !plateButton.contains(target)) {
+      closePlateMenu()
+    }
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !plateMenu.hidden) closePlateMenu()
   })
 
   // ---- cutaway --------------------------------------------------------
@@ -338,10 +412,16 @@ export function mountApp(root: HTMLElement): void {
   panelBody.addEventListener('change', (event) => {
     const input = (event.target as HTMLElement).closest<HTMLInputElement>('[data-setting]')
     if (!input) return
-    const settings = readSettings(panelBody, store.get().settings)
+    let settings = readSettings(panelBody, store.get().settings)
+    // Typing your own numbers over a preset means it is no longer that
+    // printer, and the plate should stop claiming to be one.
+    const preset = findPlate(settings.platePreset)
+    if (preset && preset.volume.some((v, i) => v !== settings.buildVolume[i])) {
+      settings = { ...settings, platePreset: 'custom' }
+    }
     store.set({ settings })
     saveSettings(settings)
-    viewport.setBuildVolume(settings.buildVolume)
+    viewport.setBuildVolume(settings.buildVolume, plateLabel(settings.platePreset))
     if (store.get().model) send({ type: 'rescore', settings })
   })
 
@@ -398,6 +478,8 @@ export function mountApp(root: HTMLElement): void {
     gridButton.setAttribute('aria-pressed', String(state.showGrid))
     viewport.setBoxVisible(state.showBox)
     boxButton.setAttribute('aria-pressed', String(state.showBox))
+    viewport.setPlateVisible(state.showPlate)
+    plateButton.setAttribute('aria-pressed', String(state.showPlate))
 
     // Chrome that only means something once a mesh is on screen.
     chip.hidden = !hasModel
@@ -597,6 +679,26 @@ function shellHtml(): string {
         </div>
         <button class="iconbtn" data-action="grid" aria-pressed="true"
                 aria-label="Grid" data-tip="Grid — a ruler on the build plane">${toolIcons.grid}</button>
+        <div class="tool">
+          <button class="iconbtn" data-action="plate" aria-pressed="false" aria-haspopup="menu"
+                  aria-label="Build plate" data-tip="Build plate — right-click to pick a printer">${toolIcons.plate}</button>
+          <div class="menu" data-menu="plate" role="menu" aria-label="Build plate" hidden>
+            <button class="menu__item" role="menuitemradio" data-plate="none">None</button>
+            <span class="menu__sep"></span>
+            ${PLATE_PRESETS.map(
+              (preset) => `
+              <button class="menu__item" role="menuitemradio" data-plate="${preset.id}">
+                <span>${preset.name}</span>
+                <span class="menu__dim mono">${preset.volume[0]} × ${preset.volume[1]} × ${preset.volume[2]}</span>
+              </button>`,
+            ).join('')}
+            <span class="menu__sep"></span>
+            <button class="menu__item" role="menuitemradio" data-plate="custom">
+              <span>Custom…</span>
+              <span class="menu__dim mono">set in Setup</span>
+            </button>
+          </div>
+        </div>
         <button class="iconbtn" data-action="box" aria-pressed="true"
                 aria-label="Bounding box" data-tip="Bounding box — measured extents">${toolIcons.box}</button>
         <button class="iconbtn" data-action="fit"

@@ -122,9 +122,14 @@ Requires Node 20+.
 ### Deploying
 
 Pushing to `main` builds and publishes to GitHub Pages via
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). Enable Pages with
-the "GitHub Actions" source in your repository settings. `base` is `''`, so the
-build works from a project sub-path without any configuration.
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). `base` is `''`,
+so the build works from a project sub-path without any configuration.
+
+**This needs one repository setting before the first deploy can succeed:**
+Settings → Pages → Source → **GitHub Actions**. Until it is set, the workflow
+fails at `configure-pages` with `Get Pages site failed ... Not Found`. It cannot
+be done from the workflow: `GITHUB_TOKEN` may read a Pages site but not create
+one, so `enablement: true` fails with `Resource not accessible by integration`.
 
 ---
 

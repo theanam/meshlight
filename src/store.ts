@@ -17,6 +17,8 @@ export interface State {
   showGrid: boolean
   /** Bounding box on the model's extents, labelled with its dimensions. */
   showBox: boolean
+  /** The build plate under the model. Off until a bed is picked. */
+  showPlate: boolean
   filter: IssueFilter
   /** Index into the filtered issue list, or null when nothing is selected. */
   selectedIssue: number | null
@@ -51,16 +53,21 @@ type Listener = (state: State) => void
 /** The single app store (spec §7). Features read and write here rather than
  *  reaching into each other, so the rail, the panel and the viewport can
  *  never disagree about what is loaded. */
+/** Read once, so the plate's initial visibility can follow the bed the user
+ *  picked last time rather than defaulting off every session. */
+const INITIAL_SETTINGS = loadSettings()
+
 class Store {
   private state: State = {
     mode: 'report',
     model: null,
     score: null,
-    settings: loadSettings(),
+    settings: INITIAL_SETTINGS,
     fileName: null,
     shaded: true,
     showGrid: true,
     showBox: true,
+    showPlate: INITIAL_SETTINGS.platePreset !== 'none',
     filter: 'all',
     selectedIssue: null,
     expandedIssue: null,

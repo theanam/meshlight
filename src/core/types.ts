@@ -133,6 +133,11 @@ export interface Settings {
   overhangThreshold: number
   /** Vertices closer than this are welded during indexing. */
   weldEpsilon: number
+  /** Which build plate is drawn under the model: a preset id from
+   *  ui/plates.ts, 'custom' for the numbers above, or 'none' for no plate.
+   *  It selects a bed to draw; buildVolume is what the score reads either
+   *  way, so turning the plate off never changes the score. */
+  platePreset: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -140,4 +145,5 @@ export const DEFAULT_SETTINGS: Settings = {
   nozzleDiameter: 0.4,
   overhangThreshold: 45,
   weldEpsilon: 1e-4,
+  platePreset: 'none',
 }

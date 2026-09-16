@@ -25,9 +25,12 @@ const SECTION_LINE = 0x6fe3b0
  *  as a finding, so it stays out of the defect colours and out of mint. */
 const GRID_MINOR = 0x1d2634
 const GRID_MAJOR = 0x36435a
-const GRID_PLATE = 0x4b5c77
+/** The build plate. Cooler and a touch brighter than the grid it sits under,
+ *  so the bed reads as a surface and the ruler reads as drawn on top of it. */
+const PLATE_SURFACE = 0x223044
+const PLATE_EDGE = 0x7d93ad
+const PLATE_LABEL = '#7d8fa6'
 const GRID_LABEL = '#5f6d82'
-const GRID_LABEL_PLATE = '#55657c'
 
 /** The bounding box is a measuring aid, not part of the model. Every other
  *  colour in this scene is cool — graphite ground, slate surface, blue-grey
@@ -57,6 +60,7 @@ export class Viewport {
   private readonly repairGroup = new THREE.Group()
   private readonly groundGroup = new THREE.Group()
   private readonly boxGroup = new THREE.Group()
+  private readonly plateGroup = new THREE.Group()
 
   private solid: THREE.Mesh | null = null
   private shellHighlight: THREE.Mesh | null = null
@@ -71,6 +75,7 @@ export class Viewport {
 
   private bounds: Bounds | null = null
   private buildVolume: [number, number, number] = [220, 220, 250]
+  private plateName: string | null = null
   private step = 0
   private major = 0
   private frame = 0
@@ -94,12 +99,14 @@ export class Viewport {
     this.controls.dampingFactor = 0.08
 
     this.repairGroup.visible = false
+    this.plateGroup.visible = false
     this.scene.add(
       this.modelGroup,
       this.highlightGroup,
       this.groundGroup,
       this.repairGroup,
       this.boxGroup,
+      this.plateGroup,
     )
     this.addLighting()
 
@@ -175,6 +182,7 @@ export class Viewport {
 
     this.buildGround()
     this.buildBox()
+    this.buildPlate()
     this.fitCamera()
   }
 
@@ -307,11 +315,126 @@ export class Viewport {
     }
   }
 
-  /** The plate outline is drawn from the configured build volume, so a
-   *  settings change has to redraw it. */
-  setBuildVolume(volume: [number, number, number]): void {
+  /** The plate is drawn from the configured build volume, so picking a
+   *  different printer — or editing the numbers in Setup — has to redraw it. */
+  setBuildVolume(volume: [number, number, number], name: string | null = null): void {
     this.buildVolume = volume
-    if (this.bounds) this.buildGround()
+    this.plateName = name
+    if (this.bounds) this.buildPlate()
+  }
+
+  setPlateVisible(visible: boolean): void {
+    this.plateGroup.visible = visible
+  }
+
+  /** Draw the build plate as a plate rather than as a rectangle.
+   *
+   *  A bare outline says "something is this big" and nothing else; the point
+   *  of putting a bed under the part is to see the part standing on it. So
+   *  this is a surface with a rounded edge, the inset line where a spring
+   *  steel sheet stops short of the bed, and the four corner fixings — the
+   *  details that make the eye read "printer bed" without a label.
+   *
+   *  It answers "will this fit", which is a question about size and not about
+   *  placement — the score asks it the same way, trying the part both ways
+   *  round. So it is centred on the part's own footprint rather than guessing
+   *  where the origin of someone's bed is. */
+  private buildPlate(): void {
+    this.clearPlate()
+    if (!this.bounds) return
+
+    const [bx, by] = this.buildVolume
+    const [mx, my] = this.bounds.center
+    const z = this.bounds.min[2]
+    // The bed sits a hair under the grid, so the ruler stays legible across it
+    // instead of z-fighting with it.
+    const under = Math.max(bx, by) * 3e-4
+
+    const radius = Math.min(bx, by) * 0.045
+    const outer = roundedRect(bx, by, radius)
+
+    const surface = new THREE.Mesh(
+      new THREE.ShapeGeometry(outer),
+      new THREE.MeshBasicMaterial({
+        color: PLATE_SURFACE,
+        transparent: true,
+        // Low enough that the grid still reads through the bed: the plate is
+        // context for the part, not a lid over the ruler.
+        opacity: 0.38,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    )
+    surface.position.set(mx, my, z - under)
+    surface.renderOrder = -3
+    this.plateGroup.add(surface)
+
+    const rim = z - under * 0.5
+    this.addPlateLoop(outer.getPoints(96), mx, my, rim, 0.85)
+
+    const inset = Math.min(bx, by) * 0.035
+    this.addPlateLoop(
+      roundedRect(bx - inset * 2, by - inset * 2, Math.max(radius - inset, radius * 0.4)).getPoints(96),
+      mx,
+      my,
+      rim,
+      0.3,
+    )
+
+    const fixing = inset * 2.2
+    const screw = Math.min(bx, by) * 0.011
+    const ring = new THREE.EllipseCurve(0, 0, screw, screw, 0, Math.PI * 2, false, 0).getPoints(20)
+    for (const ox of [-1, 1]) {
+      for (const oy of [-1, 1]) {
+        this.addPlateLoop(ring, mx + ox * (bx / 2 - fixing), my + oy * (by / 2 - fixing), rim, 0.55)
+      }
+    }
+
+    // Say which bed this is. The size alone leaves you matching numbers
+    // against your printer's spec sheet.
+    // Sized off the bed, not off the grid: the grid is scaled to the part, so
+    // a 40 mm bracket would set 2 mm text on a 220 mm plate.
+    const height = Math.max(bx, by) * 0.022
+    this.addLabel(
+      this.plateGroup,
+      this.plateName
+        ? `${this.plateName} \u00b7 ${fmtMm(bx)} \u00d7 ${fmtMm(by)} mm`
+        : `${fmtMm(bx)} \u00d7 ${fmtMm(by)} mm plate`,
+      [mx - bx / 2, my - by / 2 - height * 0.6, z],
+      [0, 1],
+      height,
+      PLATE_LABEL,
+    )
+  }
+
+  private addPlateLoop(
+    points: THREE.Vector2[],
+    ox: number,
+    oy: number,
+    z: number,
+    opacity: number,
+  ): void {
+    const flat = new Float32Array(points.length * 3)
+    points.forEach((p, i) => {
+      flat[i * 3] = ox + p.x
+      flat[i * 3 + 1] = oy + p.y
+      flat[i * 3 + 2] = z
+    })
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3))
+    const loop = new THREE.LineLoop(
+      geometry,
+      new THREE.LineBasicMaterial({ color: PLATE_EDGE, transparent: true, opacity }),
+    )
+    loop.renderOrder = -2
+    this.plateGroup.add(loop)
+  }
+
+  private clearPlate(): void {
+    for (const child of [...this.plateGroup.children]) {
+      this.plateGroup.remove(child)
+      disposeObject(child)
+    }
   }
 
   setGridVisible(visible: boolean): void {
@@ -364,25 +487,6 @@ export class Viewport {
     this.addGroundLines(minorPoints, GRID_MINOR, 0.5)
     this.addGroundLines(majorPoints, GRID_MAJOR, 0.85)
 
-    // The plate outline answers "will this fit", which is a question about
-    // size and not about placement — the score asks it the same way, trying
-    // the part both ways round. So it is centred on the part's own footprint
-    // rather than guessing where the origin of someone's bed is.
-    const [bx, by] = this.buildVolume
-    const [mx, my] = this.bounds.center
-    const x0 = mx - bx / 2, x1 = mx + bx / 2
-    const y0 = my - by / 2, y1 = my + by / 2
-    this.addGroundLines(
-      [
-        x0, y0, z, x1, y0, z,
-        x1, y0, z, x1, y1, z,
-        x1, y1, z, x0, y1, z,
-        x0, y1, z, x0, y0, z,
-      ],
-      GRID_PLATE,
-      0.9,
-    )
-
     // Numbers on the major lines. Without them the grid only says "the cells
     // are all the same size" and you are left counting boxes and guessing what
     // one is worth; with them the plane reads as a ruler, in the same
@@ -406,14 +510,6 @@ export class Viewport {
     const tag = gap * 4
     this.addLabel(this.groundGroup, 'X mm', [cx + reach + tag, cy - reach - gap, z], [0, 1], textHeight)
     this.addLabel(this.groundGroup, 'Y mm', [cx - reach - gap, cy + reach + tag, z], [1, 0], textHeight)
-    // The outline is meaningless unless it says what it is.
-    this.addLabel(this.groundGroup, 
-      `${fmtMm(bx)} \u00d7 ${fmtMm(by)} plate`,
-      [x0, y0 - gap, z],
-      [0, 1],
-      textHeight,
-      GRID_LABEL_PLATE,
-    )
   }
 
   /** One piece of text on the ground plane, drawn to a canvas and hung on a
@@ -612,7 +708,14 @@ export class Viewport {
   fitCamera(): void {
     if (!this.bounds) return
     const [cx, cy, cz] = this.bounds.center
-    const radius = Math.max(Math.hypot(...this.bounds.size) / 2, 0.001)
+    const [sx, sy, sz] = this.bounds.size
+    // A visible plate is part of what you asked to see. Framing the part
+    // alone leaves a 220 mm bed off screen under an 80 mm bracket, which
+    // makes turning the plate on look like it did nothing — and seeing a
+    // small part on a big bed is the whole reason to draw one.
+    const [bx, by] = this.plateGroup.visible ? this.buildVolume : [0, 0]
+    const extent = Math.hypot(Math.max(sx, bx), Math.max(sy, by), sz)
+    const radius = Math.max(extent / 2, 0.001)
     const distance = radius / Math.sin((this.camera.fov * Math.PI) / 360)
 
     this.controls.target.set(cx, cy, cz)
@@ -809,6 +912,7 @@ export class Viewport {
     this.clearRepair()
     this.clearGround()
     this.clearBox()
+    this.clearPlate()
     this.renderer.dispose()
   }
 }
@@ -884,4 +988,24 @@ function textTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   texture.minFilter = THREE.LinearFilter
   texture.generateMipmaps = false
   return texture
+}
+
+/** A rectangle with rounded corners, centred on the origin in the XY plane.
+ *  Square corners are what makes a drawn bed read as a box rather than a
+ *  piece of hardware. */
+function roundedRect(width: number, height: number, radius: number): THREE.Shape {
+  const shape = new THREE.Shape()
+  const x = -width / 2
+  const y = -height / 2
+  const r = Math.min(radius, Math.min(width, height) / 2)
+  shape.moveTo(x + r, y)
+  shape.lineTo(x + width - r, y)
+  shape.quadraticCurveTo(x + width, y, x + width, y + r)
+  shape.lineTo(x + width, y + height - r)
+  shape.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
+  shape.lineTo(x + r, y + height)
+  shape.quadraticCurveTo(x, y + height, x, y + height - r)
+  shape.lineTo(x, y + r)
+  shape.quadraticCurveTo(x, y, x + r, y)
+  return shape
 }

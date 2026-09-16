@@ -31,6 +31,14 @@ export const toolIcons = {
   <rect x="1.5" y="1.5" width="15" height="15" rx="2.5" stroke="currentColor" stroke-width="1.4"/>
   <path d="M6.5 1.5v15M11.5 1.5v15M1.5 6.5h15M1.5 11.5h15" stroke="currentColor" stroke-width="1.2"/>
 </svg>`,
+  plate: `
+<svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+  <rect x="1.4" y="3.6" width="15.2" height="10.8" rx="2.2" stroke="currentColor" stroke-width="1.4"/>
+  <circle cx="4.3" cy="6.4" r="0.95" fill="currentColor"/>
+  <circle cx="13.7" cy="6.4" r="0.95" fill="currentColor"/>
+  <circle cx="4.3" cy="11.6" r="0.95" fill="currentColor"/>
+  <circle cx="13.7" cy="11.6" r="0.95" fill="currentColor"/>
+</svg>`,
   box: `
 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
   <rect x="2.5" y="2.5" width="13" height="13" rx="1" stroke="currentColor" stroke-width="1.3"
