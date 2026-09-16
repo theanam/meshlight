@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { orientedFootprint } from '../core/footprint'
 import type { Footprint } from '../core/footprint'
+import { textCanvas, textTexture } from './label'
 import type { Bounds } from '../core/types'
 import type { Highlights } from '../worker/protocol'
 
@@ -144,10 +145,36 @@ export class Viewport {
     this.camera.updateProjectionMatrix()
   }
 
+  /** Called after each frame with the camera's orientation. The view cube
+   *  follows the camera through this rather than running a second animation
+   *  loop of its own, so the two can never be a frame out of step. */
+  onFrame: ((orientation: THREE.Quaternion) => void) | null = null
+
   private readonly tick = (): void => {
     this.frame++
     this.controls.update()
     this.renderer.render(this.scene, this.camera)
+    this.onFrame?.(this.camera.quaternion)
+  }
+
+  /** Look at the model from a named direction, keeping the current distance
+   *  so clicking a face of the cube changes the angle and nothing else. */
+  orientTo(direction: [number, number, number]): void {
+    const target = this.controls.target.clone()
+    const distance = Math.max(this.camera.position.distanceTo(target), 0.001)
+    const from = new THREE.Vector3(...direction).normalize()
+    // Straight down or straight up has no "up" along Z to speak of, so the
+    // world Y stands in — otherwise the view degenerates and the model spins.
+    this.camera.up.set(0, 0, 1)
+    if (Math.abs(from.z) > 0.999) this.camera.up.set(0, 1, 0)
+    this.camera.position.copy(target).addScaledVector(from, distance)
+    this.controls.update()
+  }
+
+  /** Back to the three-quarter view the model first opened on. */
+  resetView(): void {
+    this.camera.up.set(0, 0, 1)
+    this.fitCamera()
   }
 
   setModel(
@@ -1188,36 +1215,6 @@ function fmtMm(value: number): string {
  *  decimals — the same precision the report quotes defect coordinates in. */
 function fmtDim(value: number): string {
   return value.toFixed(2)
-}
-
-/** Draw one line of text onto its own canvas, sized tight to the glyphs plus
- *  a small pad, ready to become a texture. */
-function textCanvas(text: string, color: string): HTMLCanvasElement | null {
-  const fontPx = 40
-  const pad = 8
-  const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')
-  if (!context) return null
-
-  const font = `500 ${fontPx}px "JetBrains Mono", ui-monospace, monospace`
-  context.font = font
-  canvas.width = Math.ceil(context.measureText(text).width) + pad * 2
-  canvas.height = fontPx + pad * 2
-  // Resizing a canvas resets its context, so the font has to be set again.
-  context.font = font
-  context.fillStyle = color
-  context.textAlign = 'center'
-  context.textBaseline = 'middle'
-  context.fillText(text, canvas.width / 2, canvas.height / 2)
-  return canvas
-}
-
-function textTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.minFilter = THREE.LinearFilter
-  texture.generateMipmaps = false
-  return texture
 }
 
 /** A rectangle with rounded corners, centred on the origin in the XY plane.

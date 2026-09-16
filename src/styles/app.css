@@ -208,9 +208,19 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .iconbtn:hover::after,
 .iconbtn:focus-visible::after { opacity: 1; }
-/* These buttons sit hard against the right edge of the stage, so a centred
-   tooltip spills over the panel beside it. Hang them all from the right. */
+/* The toggles sit hard against the right edge of the stage, so a centred
+   tooltip spills over the panel beside it. Hang them from the right. */
 .stage__top .iconbtn::after { left: auto; right: 0; transform: none; }
+
+/* The view controls sit at the bottom-left instead, where a tooltip below
+   would fall off the bottom edge and a centred one off the side. */
+.viewbar .iconbtn::after {
+  top: auto;
+  bottom: calc(100% + 9px);
+  left: 0;
+  right: auto;
+  transform: none;
+}
 .iconbtn[aria-pressed='true'] {
   color: var(--void);
   background: var(--ink);
@@ -224,6 +234,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   position: absolute;
   top: calc(100% + 9px);
   right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
   z-index: 10;
   min-width: 250px;
   padding: 6px;
@@ -252,9 +264,49 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .menu__dim { font-size: var(--text-xs); color: var(--ink-faint); white-space: nowrap; }
 .menu__sep { height: 1px; margin: 5px 2px; background: var(--line); }
 
-.scorecard {
+/* Anchored above its button and opening to the right: the plate picker now
+   lives at the bottom-left of the stage, where downwards is off the screen. */
+.menu--up {
+  top: auto;
+  bottom: calc(100% + 9px);
+  right: auto;
+  left: 0;
+}
+
+/* ---- view cube and viewport controls -------------------------------- */
+
+.viewbar {
   position: absolute;
   left: 28px;
+  bottom: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+/* No panel behind it: the cube is a solid object on the backdrop, and a card
+   around it would read as another floating window in a view that already has
+   three. */
+.viewbar__cube {
+  width: 104px;
+  height: 104px;
+  display: block;
+  cursor: default;
+}
+
+/* Only the two that change where you are looking from. The overlay toggles
+   live up beside Shaded/Wire, because turning the grid on is a question about
+   what is drawn, not about which way round the model is. */
+.viewbar__tools {
+  display: flex;
+  gap: 8px;
+}
+
+.scorecard {
+  position: absolute;
+  /* Clear of the view cube, which owns the bottom-left corner. */
+  left: 150px;
   bottom: 28px;
   display: flex;
   align-items: center;
@@ -1058,6 +1110,11 @@ a.btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: no
   .panel { width: 100%; border-left: none; border-top: 1px solid var(--line); max-height: 45%; }
   .stage { min-height: 320px; }
   .legend { display: none; }
+  /* The cube is the first thing to go on a phone: it costs a corner of a
+     viewport that is already short, and touch has no hover to explain it. */
+  .viewbar__cube { display: none; }
+  .viewbar { left: 14px; bottom: 14px; }
+  .scorecard { left: 14px; right: 14px; bottom: 96px; }
   .stage__top { left: 14px; right: 14px; top: 14px; flex-wrap: wrap; }
   .scorecard { left: 14px; right: 14px; bottom: 14px; }
   .cutbar { right: 14px; top: 46%; padding: 12px 10px; }

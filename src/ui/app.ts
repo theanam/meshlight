@@ -2,6 +2,7 @@ import { FILE_INPUT_ACCEPT, SUPPORTED_EXTENSIONS, baseName } from '../core/mesh-
 import { DEFAULT_SETTINGS } from '../core/types'
 import type { RepairOptions } from '../core/repair'
 import type { Settings } from '../core/types'
+import { NavCube } from '../render/navcube'
 import { Viewport } from '../render/viewport'
 import type { Mode } from '../store'
 import { NO_REPAIRS, saveSettings, store } from '../store'
@@ -75,10 +76,16 @@ export function mountApp(root: HTMLElement): void {
   const boxButton = root.querySelector<HTMLButtonElement>('[data-action="box"]')!
   const plateButton = root.querySelector<HTMLButtonElement>('[data-action="plate"]')!
   const partsButton = root.querySelector<HTMLButtonElement>('[data-action="parts"]')!
+  const viewbar = root.querySelector<HTMLElement>('.viewbar')!
+  const cubeCanvas = root.querySelector<HTMLCanvasElement>('.viewbar__cube')!
   const plateMenu = root.querySelector<HTMLElement>('[data-menu="plate"]')!
   const compare = root.querySelector<HTMLElement>('.segmented--compare')!
 
   const viewport = new Viewport(canvas)
+  // Clicking a face looks from that face; the cube follows the camera through
+  // the viewport's per-frame callback rather than polling it.
+  const navCube = new NavCube(cubeCanvas, (direction) => viewport.orientTo(direction))
+  viewport.onFrame = (orientation) => navCube.sync(orientation)
   const worker = new Worker(new URL('../worker/mesh.worker.ts', import.meta.url), { type: 'module' })
 
   /** Keeps the last buffer around so re-running analysis after a settings
@@ -277,11 +284,16 @@ export function mountApp(root: HTMLElement): void {
     if (button) store.set({ shaded: button.dataset.view === 'shaded' })
   })
 
-  root.querySelector('.stage__top')!.addEventListener('click', (event) => {
+  // The controls sit in two places now — the view picker with the cube, the
+  // overlay toggles up beside Shaded/Wire — so this listens across the stage
+  // and answers only to the actions it owns. `help` also lives here.
+  const VIEW_ACTIONS = new Set(['reset', 'fit', 'parts', 'box', 'plate', 'grid'])
+  root.querySelector('.stage')!.addEventListener('click', (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-action]')
-    if (!button) return
+    if (!button || !VIEW_ACTIONS.has(button.dataset.action ?? '')) return
     const action = button.dataset.action
-    if (action === 'fit') viewport.fitCamera()
+    if (action === 'reset') viewport.resetView()
+    else if (action === 'fit') viewport.fitCamera()
     else if (action === 'parts') {
       const on = !store.get().pickParts
       // Leaving the mode drops the selection with it, so the viewport never
@@ -546,6 +558,7 @@ export function mountApp(root: HTMLElement): void {
 
     // Chrome that only means something once a mesh is on screen.
     chip.hidden = !hasModel
+    viewbar.hidden = !hasModel
     legend.hidden = !hasModel || state.mode === 'cutaway'
     cutbar.hidden = !hasModel || state.mode !== 'cutaway'
     shell.classList.toggle('is-cutaway', hasModel && state.mode === 'cutaway')
@@ -743,13 +756,12 @@ function shellHtml(): string {
           <button data-compare="before" aria-pressed="false">Before</button>
           <button data-compare="after" aria-pressed="true">After</button>
         </div>
-        <!-- Shaded and Wire are two ways of drawing one model, so they stay
-             a picker. Grid is an on/off state and Fit is a one-shot action;
-             neither belongs in a group that says "pick one of these". -->
         <div class="segmented">
           <button data-view="shaded" aria-pressed="true">Shaded</button>
           <button data-view="wire" aria-pressed="false">Wire</button>
         </div>
+        <button class="iconbtn" data-action="box" aria-pressed="true"
+                aria-label="Bounding box" data-tip="Bounding box — measured extents">${toolIcons.box}</button>
         <button class="iconbtn" data-action="grid" aria-pressed="true"
                 aria-label="Grid" data-tip="Grid — a ruler on the build plane">${toolIcons.grid}</button>
         <div class="tool">
@@ -774,10 +786,20 @@ function shellHtml(): string {
         </div>
         <button class="iconbtn" data-action="parts" aria-pressed="false"
                 aria-label="Select parts" data-tip="Select parts — click a body to isolate it">${toolIcons.parts}</button>
-        <button class="iconbtn" data-action="box" aria-pressed="true"
-                aria-label="Bounding box" data-tip="Bounding box — measured extents">${toolIcons.box}</button>
-        <button class="iconbtn" data-action="fit"
-                aria-label="Fit view" data-tip="Fit the model in view">${toolIcons.fit}</button>
+      </div>
+
+      <!-- Viewport controls live together on the left, under the cube that
+           says which way you are looking. The right-hand side is the defect
+           legend and stays that way. -->
+      <div class="viewbar" hidden>
+        <canvas class="viewbar__cube" width="208" height="208"
+                aria-label="View cube — click a face to look from it"></canvas>
+        <div class="viewbar__tools">
+          <button class="iconbtn" data-action="reset"
+                  aria-label="Reset view" data-tip="Reset the view">${toolIcons.reset}</button>
+          <button class="iconbtn" data-action="fit"
+                  aria-label="Fit view" data-tip="Fit the model in view">${toolIcons.fit}</button>
+        </div>
       </div>
 
       <div class="scorecard" hidden>
