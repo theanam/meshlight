@@ -6,6 +6,7 @@ import { Viewport } from '../render/viewport'
 import type { Mode } from '../store'
 import { NO_REPAIRS, saveSettings, store } from '../store'
 import type { WorkerRequest, WorkerResponse } from '../worker/protocol'
+import { REPO_URL, githubIcon, helpHtml, mountHelp } from './help'
 import { markSvg, railIcons, toolIcons } from './icons'
 import { PLATE_PRESETS, findPlate, plateLabel } from './plates'
 import {
@@ -248,6 +249,26 @@ export function mountApp(root: HTMLElement): void {
       store.set({ mode })
     }),
   )
+
+  // ---- help ------------------------------------------------------------
+
+  const help = mountHelp(root)
+
+  root.querySelectorAll<HTMLElement>('[data-action="help"]').forEach((trigger) =>
+    trigger.addEventListener('click', () => help.toggle()),
+  )
+
+  document.addEventListener('keydown', (event) => {
+    // Setup is a form, so "?" has to stay a character anywhere it could be one.
+    const target = event.target as HTMLElement | null
+    if (target?.closest('input, textarea, select')) return
+    if (event.key === '?') {
+      event.preventDefault()
+      help.toggle()
+    } else if (event.key === 'Escape' && help.isOpen) {
+      help.close()
+    }
+  })
 
   // ---- viewport controls ----------------------------------------------
 
@@ -694,10 +715,19 @@ function shellHtml(): string {
         </button>`,
       ).join('')}
       <span class="rail__spacer"></span>
+      <button class="rail__item" data-action="help" aria-haspopup="dialog" aria-expanded="false">
+        ${railIcons.help}
+        <span class="rail__label">HELP</span>
+      </button>
       <button class="rail__item" data-mode="setup" aria-current="false">
         ${railIcons.setup}
         <span class="rail__label">SETUP</span>
       </button>
+      <a class="rail__item rail__item--out" href="${REPO_URL}" target="_blank"
+         rel="noreferrer noopener" aria-label="Source on GitHub">
+        ${githubIcon}
+        <span class="rail__label">GITHUB</span>
+      </a>
     </nav>
 
     <main class="stage">
@@ -785,6 +815,9 @@ function shellHtml(): string {
         <span class="drop__formats mono">${SUPPORTED_EXTENSIONS.map((e) => e.slice(1).toUpperCase()).join(' · ')}</span>
         <span class="drop__promise"><span class="dot"></span>nothing leaves your machine</span>
         <button class="btn btn--primary drop__cta" data-open-file>Choose a file</button>
+        <button class="drop__help" data-action="help" aria-haspopup="dialog" aria-expanded="false">
+          How it works
+        </button>
         <p class="drop__error" role="alert"></p>
       </div>
 
@@ -815,6 +848,8 @@ function shellHtml(): string {
       </div>
     </aside>
   </div>
+
+  ${helpHtml()}
 
   <input type="file" id="file-input" accept="${FILE_INPUT_ACCEPT}" hidden>`
 }

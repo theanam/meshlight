@@ -21,6 +21,14 @@ export const railIcons = {
     '</span>',
   fix: '<span style="width:20px;height:20px;border:2px solid currentColor;border-radius:4px;transform:rotate(45deg)"></span>',
   setup: '<span style="width:18px;height:18px;border:2px solid currentColor;border-radius:50%"></span>',
+  /** A question mark in a ring: the one glyph nobody has to be taught. */
+  help: `
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+  <circle cx="10" cy="10" r="8.4" stroke="currentColor" stroke-width="1.9"/>
+  <path d="M7.4 7.7a2.65 2.65 0 0 1 5.2.7c0 1.75-2.6 2.1-2.6 3.75" stroke="currentColor"
+        stroke-width="1.9" stroke-linecap="round"/>
+  <circle cx="10" cy="15.1" r="1.15" fill="currentColor"/>
+</svg>`,
 } as const
 
 /** Viewport tools. These sit as round buttons over the 3D view, so they are

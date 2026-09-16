@@ -69,9 +69,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   transition: background 120ms ease, color 120ms ease;
 }
 
+.rail__item { text-decoration: none; }
 .rail__item:hover:not(:disabled) { background: var(--raised); }
 .rail__item[aria-current='true'] { background: var(--raised); color: var(--accent); }
 .rail__item:disabled { opacity: 0.4; cursor: not-allowed; }
+/* GitHub leaves the app rather than switching a mode inside it, so it sits a
+   shade back from the items that do — present, not competing. */
+.rail__item--out { color: var(--ink-faint); }
+.rail__item--out:hover { color: var(--ink-dim); }
 
 .rail__label {
   font-family: var(--font-mono);
@@ -799,6 +804,9 @@ input[type='number'] {
   transition: border-color 120ms ease, color 120ms ease;
 }
 .btn:hover { border-color: var(--ink-muted); color: var(--ink); }
+/* Some of these are links out rather than buttons; they must not pick up the
+   browser's underline or baseline alignment. */
+a.btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
 .btn--primary {
   background: var(--accent);
   color: var(--void);
@@ -838,6 +846,18 @@ input[type='number'] {
 .drop__cta { font-size: var(--text-md); padding: 13px 22px; border-radius: var(--r-lg); }
 .drop__error { color: var(--defect-nonmanifold); font-size: var(--text-base); min-height: 1.2em; }
 
+/* Sits under the primary action as a quiet second offer: the first screen
+   should read as "drop a file", not as "read this first". */
+.drop__help {
+  font-size: var(--text-base);
+  color: var(--ink-muted);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--line-control);
+  margin-top: -8px;
+}
+.drop__help:hover { color: var(--ink); text-decoration-color: var(--ink-muted); }
+
 .shell.is-dragging .drop { outline: 2px dashed var(--accent); outline-offset: -18px; }
 
 /* ---- progress ------------------------------------------------------- */
@@ -859,6 +879,162 @@ input[type='number'] {
 .progress__fill { height: 100%; background: var(--accent); width: 0%; transition: width 180ms ease; }
 
 .empty { padding: 26px; font-size: var(--text-base); line-height: 1.55; color: var(--ink-muted); text-wrap: pretty; }
+
+
+/* ============================ help dialog ============================
+   Four pictures and a colour key. The app explains itself in the panels;
+   this only has to answer "what is this and where does my file go", which
+   is a thing to be shown rather than read. */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #050709CC;
+  backdrop-filter: blur(4px);
+}
+
+.help {
+  width: min(580px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 24px 26px 22px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+  box-shadow: 0 24px 60px #03050899;
+}
+
+.help__head { display: flex; align-items: center; gap: 12px; }
+.help__title {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+.help__close {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--ink-muted);
+}
+.help__close:hover { background: var(--raised); color: var(--ink); }
+
+/* ---- the four steps -------------------------------------------------- */
+
+/* Three shared rows — glyph, caption, note — so a caption that wraps to two
+   lines cannot push its own note out of line with the other three. */
+.help__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: auto auto auto;
+  gap: 9px 18px;
+}
+
+.step {
+  position: relative;
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  justify-items: center;
+  align-content: start;
+  text-align: center;
+}
+
+/* A dashed run through the gap, so the four read as one sequence rather than
+   four unrelated cards. */
+.step + .step::before {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: 22px;
+  width: 18px;
+  border-top: 1px dashed var(--line-control);
+}
+
+.step__art { color: var(--accent); line-height: 0; }
+.step__caption { font-size: var(--text-base); font-weight: 600; line-height: 1.35; text-wrap: balance; }
+.step__note { font-size: 10px; color: var(--ink-faint); line-height: 1.4; text-wrap: balance; }
+
+/* ---- colour key ------------------------------------------------------ */
+
+.help__keys {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.help__keys-title {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  color: var(--ink-faint);
+}
+.help__keys-row { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+
+.hkey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--ink-dim);
+}
+/* Matches the viewport legend: an edge defect is drawn as a line, a single
+   bad triangle as a dot. */
+.hkey__line { width: 11px; height: 2px; display: block; }
+.hkey__dot { width: 7px; height: 7px; border-radius: 50%; display: block; }
+
+/* ---- source, issues, feedback ---------------------------------------- */
+
+.help__foot {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px 16px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.help__repo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: var(--text-base);
+}
+.help__repo:hover { color: var(--ink); }
+.help__repo span { overflow: hidden; text-overflow: ellipsis; }
+
+.help__actions { display: flex; gap: 10px; }
+
+.help__mail {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+}
+.help__mail a { color: var(--ink-muted); text-decoration: underline; text-underline-offset: 3px; }
+.help__mail a:hover { color: var(--accent); }
 
 /* ---- narrow screens -------------------------------------------------
    Spec §8/§12: must not break on small screens, not optimised for them. */
@@ -886,6 +1062,20 @@ input[type='number'] {
   .scorecard { left: 14px; right: 14px; bottom: 14px; }
   .cutbar { right: 14px; top: 46%; padding: 12px 10px; }
   .cutbar input[type='range'] { height: min(30vh, 200px); }
+
+  /* Two rows of two, and the connectors stop meaning anything once the row
+     wraps — so they go. */
+  .help__steps { grid-template-columns: repeat(2, 1fr); grid-template-rows: none; gap: 22px 18px; }
+  .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+  }
+  .step + .step::before { display: none; }
+  .help__foot { grid-template-columns: 1fr; }
+  .help__actions { flex-wrap: wrap; }
+  .help__actions .btn { flex: 1; justify-content: center; }
 }
 
 /* Picking mode: the pointer selects a body rather than starting an orbit,
