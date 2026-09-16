@@ -162,6 +162,13 @@ otherwise hides — a 4 mm bracket and a 300 mm vase fill the frame identically.
   millimetres, and the configured build volume is drawn as a plate outline.
 - **Bounding box** — the part's extents, with its three dimensions written on
   the edges that measure them.
+- **Select parts** — off by default. With it on, clicking a body in the
+  viewport isolates it: the shell is painted indigo, everything else drops
+  back, and it gets its own dimensioned box so you can measure one part of a
+  multi-body file without splitting the file up. Clicking empty space clears
+  it. A drag is still an orbit — only a press that stays put counts as a
+  selection — and the same selection drives the shell rows in the report, so
+  clicking a part and clicking its row in the list mean the same thing.
 
 Both toggle from round buttons over the viewport, next to the Shaded / Wire
 picker and the Fit control. Grid numbers use the same millimetre coordinates

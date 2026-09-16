@@ -887,3 +887,7 @@ input[type='number'] {
   .cutbar { right: 14px; top: 46%; padding: 12px 10px; }
   .cutbar input[type='range'] { height: min(30vh, 200px); }
 }
+
+/* Picking mode: the pointer selects a body rather than starting an orbit,
+   so the canvas stops advertising itself as a thing you grab. */
+.is-picking .stage__canvas { cursor: crosshair; }

@@ -73,6 +73,7 @@ export function mountApp(root: HTMLElement): void {
   const gridButton = root.querySelector<HTMLButtonElement>('[data-action="grid"]')!
   const boxButton = root.querySelector<HTMLButtonElement>('[data-action="box"]')!
   const plateButton = root.querySelector<HTMLButtonElement>('[data-action="plate"]')!
+  const partsButton = root.querySelector<HTMLButtonElement>('[data-action="parts"]')!
   const plateMenu = root.querySelector<HTMLElement>('[data-menu="plate"]')!
   const compare = root.querySelector<HTMLElement>('.segmented--compare')!
 
@@ -155,7 +156,6 @@ export function mountApp(root: HTMLElement): void {
         )
         viewport.setModel(payload.positions, payload.indices, payload.bounds, payload.shellIds)
         viewport.setHighlights(payload.highlights)
-        viewport.highlightShell(null)
         viewport.clearRepair()
         store.set({
           model: payload,
@@ -166,6 +166,7 @@ export function mountApp(root: HTMLElement): void {
           selectedIssue: null,
           expandedIssue: null,
           selectedInstance: null,
+          selectedShell: null,
           cutZ: null,
           repairOptions: { ...NO_REPAIRS },
           repairPreview: null,
@@ -260,7 +261,12 @@ export function mountApp(root: HTMLElement): void {
     if (!button) return
     const action = button.dataset.action
     if (action === 'fit') viewport.fitCamera()
-    else if (action === 'box') store.set({ showBox: !store.get().showBox })
+    else if (action === 'parts') {
+      const on = !store.get().pickParts
+      // Leaving the mode drops the selection with it, so the viewport never
+      // keeps a part isolated by a mode that is no longer on.
+      store.set({ pickParts: on, selectedShell: on ? store.get().selectedShell : null })
+    } else if (action === 'box') store.set({ showBox: !store.get().showBox })
     else if (action === 'plate') {
       // Nothing to show until a bed has been chosen, so the first press opens
       // the menu rather than toggling a plate that does not exist yet.
@@ -280,6 +286,33 @@ export function mountApp(root: HTMLElement): void {
     const show = button.dataset.compare === 'after'
     store.set({ showRepair: show })
     viewport.showRepair(show)
+  })
+
+  // ---- picking parts in the viewport ----------------------------------
+
+  // OrbitControls owns the same pointer, so a press only counts as a selection
+  // if it did not turn into a drag. Anything further or slower than this is
+  // someone rotating the model, and stealing that would make the view stick.
+  const CLICK_SLOP_PX = 4
+  const CLICK_MS = 500
+  let pressedAt = 0
+  let pressX = 0
+  let pressY = 0
+
+  canvas.addEventListener('pointerdown', (event) => {
+    pressedAt = event.timeStamp
+    pressX = event.clientX
+    pressY = event.clientY
+  })
+
+  canvas.addEventListener('pointerup', (event) => {
+    if (!store.get().pickParts || event.button !== 0) return
+    if (event.timeStamp - pressedAt > CLICK_MS) return
+    if (Math.hypot(event.clientX - pressX, event.clientY - pressY) > CLICK_SLOP_PX) return
+
+    // Empty space clears the selection, which is the only obvious way back out
+    // of an isolated part.
+    store.set({ selectedShell: viewport.pickShell(event.clientX, event.clientY) })
   })
 
   // ---- build plate menu -----------------------------------------------
@@ -367,7 +400,7 @@ export function mountApp(root: HTMLElement): void {
       // Shells are the one defect class with no highlight painted on the
       // mesh, because a whole solid cannot be outlined like a bad edge.
       // Picking one isolates it in its own colour instead.
-      viewport.highlightShell(issue?.kind === 'shells' ? index : null)
+      store.set({ selectedShell: issue?.kind === 'shells' ? index : null })
       if (instance) viewport.focusOn(instance.focus, instance.radius)
       return
     }
@@ -384,7 +417,7 @@ export function mountApp(root: HTMLElement): void {
       selectedInstance: null,
     })
     // Stepping back up to the group drops the isolation.
-    viewport.highlightShell(null)
+    store.set({ selectedShell: null })
     // Clicking an issue takes the camera there (spec §5.3).
     if (issue?.focus) viewport.focusOn(issue.focus)
   })
@@ -486,6 +519,9 @@ export function mountApp(root: HTMLElement): void {
     boxButton.setAttribute('aria-pressed', String(state.showBox))
     viewport.setPlateVisible(state.showPlate)
     plateButton.setAttribute('aria-pressed', String(state.showPlate))
+    viewport.highlightShell(state.selectedShell)
+    partsButton.setAttribute('aria-pressed', String(state.pickParts))
+    shell.classList.toggle('is-picking', state.pickParts && hasModel)
 
     // Chrome that only means something once a mesh is on screen.
     chip.hidden = !hasModel
@@ -706,6 +742,8 @@ function shellHtml(): string {
             </button>
           </div>
         </div>
+        <button class="iconbtn" data-action="parts" aria-pressed="false"
+                aria-label="Select parts" data-tip="Select parts — click a body to isolate it">${toolIcons.parts}</button>
         <button class="iconbtn" data-action="box" aria-pressed="true"
                 aria-label="Bounding box" data-tip="Bounding box — measured extents">${toolIcons.box}</button>
         <button class="iconbtn" data-action="fit"

@@ -41,6 +41,10 @@ const GRID_LABEL = '#5f6d82'
  *  wrapping the whole part could not be mistaken for one anyway. */
 const BOX_LINE = 0x9c8f7a
 const BOX_LABEL = '#c4b59b'
+/** The picked part's own box. Indigo so it reads as the same selection as
+ *  the shell painted underneath it, never as a second measurement. */
+const PART_BOX_LINE = 0x8c9eff
+const PART_BOX_LABEL = '#aab4ff'
 
 /** Dihedral angle, in degrees, above which an edge counts as a real corner
  *  rather than tessellation of a curve. */
@@ -62,6 +66,7 @@ export class Viewport {
   private readonly groundGroup = new THREE.Group()
   private readonly boxGroup = new THREE.Group()
   private readonly plateGroup = new THREE.Group()
+  private readonly partGroup = new THREE.Group()
 
   private solid: THREE.Mesh | null = null
   private shellHighlight: THREE.Mesh | null = null
@@ -74,6 +79,7 @@ export class Viewport {
   private cutPlane: THREE.Mesh | null = null
   private readonly highlightObjects = new Map<HighlightKey, THREE.Object3D>()
 
+  private readonly raycaster = new THREE.Raycaster()
   private bounds: Bounds | null = null
   private buildVolume: [number, number, number] = [220, 220, 250]
   private plateName: string | null = null
@@ -108,6 +114,7 @@ export class Viewport {
       this.repairGroup,
       this.boxGroup,
       this.plateGroup,
+      this.partGroup,
     )
     this.addLighting()
 
@@ -202,9 +209,22 @@ export class Viewport {
   private buildBox(): void {
     this.clearBox()
     if (!this.bounds) return
+    this.drawBox(this.boxGroup, this.bounds, BOX_LINE, BOX_LABEL)
+  }
 
-    const [x0, y0, z0] = this.bounds.min
-    const [x1, y1, z1] = this.bounds.max
+  /** The box for one picked part, drawn in the selection colour so it reads as
+   *  belonging to the shell highlighted underneath it. */
+  private buildPartBox(bounds: Bounds | null): void {
+    for (const child of [...this.partGroup.children]) {
+      this.partGroup.remove(child)
+      disposeObject(child)
+    }
+    if (bounds) this.drawBox(this.partGroup, bounds, PART_BOX_LINE, PART_BOX_LABEL)
+  }
+
+  private drawBox(group: THREE.Group, bounds: Bounds, line: number, label: string): void {
+    const [x0, y0, z0] = bounds.min
+    const [x1, y1, z1] = bounds.max
     const corners: [number, number, number][] = [
       [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
       [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
@@ -220,13 +240,13 @@ export class Viewport {
 
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3))
-    this.boxGroup.add(
+    group.add(
       new THREE.LineSegments(
         geometry,
         // No depth test: a box that disappears inside the part it measures is
         // worse than one drawn over it.
         new THREE.LineBasicMaterial({
-          color: BOX_LINE,
+          color: line,
           transparent: true,
           opacity: 0.5,
           depthTest: false,
@@ -234,8 +254,8 @@ export class Viewport {
       ),
     )
 
-    const [sx, sy, sz] = this.bounds.size
-    const [cx, cy, cz] = this.bounds.center
+    const [sx, sy, sz] = bounds.size
+    const [cx, cy, cz] = bounds.center
     // Bigger than a grid tick: lying along an edge costs these a lot of
     // apparent size to foreshortening, and they are the measurement the box
     // exists to give.
@@ -247,28 +267,31 @@ export class Viewport {
     // numbers in space do not say which is which.
     const V = THREE.Vector3
     this.addEdgeLabel(
-      this.boxGroup,
+      group,
       `X ${fmtDim(sx)}`,
       new V(cx, y0 - gap, z0),
       new V(1, 0, 0),
       new V(0, 1, 0),
       height,
+      { color: label },
     )
     this.addEdgeLabel(
-      this.boxGroup,
+      group,
       `Y ${fmtDim(sy)}`,
       new V(x1 + gap, cy, z0),
       new V(0, 1, 0),
       new V(-1, 0, 0),
       height,
+      { color: label },
     )
     this.addEdgeLabel(
-      this.boxGroup,
+      group,
       `Z ${fmtDim(sz)}`,
       new V(x0 - gap, y0, cz),
       new V(0, 0, 1),
       new V(-1, 0, 0),
       height,
+      { color: label },
     )
   }
 
@@ -819,6 +842,62 @@ export class Viewport {
     this.highlightGroup.visible = true
   }
 
+  /** Which part is under this point on screen, or null for empty space.
+   *
+   *  The cast is against the solid alone: the grid, the plate and the boxes
+   *  are annotation, and having them swallow a click would make the model
+   *  feel unreachable through its own chrome. `faceIndex` is the triangle
+   *  index, which is exactly what shellIds is keyed by. */
+  pickShell(clientX: number, clientY: number): number | null {
+    if (!this.solid || !this.meshData) return null
+    const rect = this.canvas.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    )
+    this.raycaster.setFromCamera(ndc, this.camera)
+    const hit = this.raycaster.intersectObject(this.solid, false)[0]
+    // faceIndex is typed as possibly null as well as absent.
+    if (!hit || hit.faceIndex == null) return null
+    return this.meshData.shellIds[hit.faceIndex] ?? null
+  }
+
+  /** Extents of one shell, walked on demand.
+   *
+   *  Not precomputed for every shell: a part can have hundreds, only one is
+   *  ever selected, and a single pass over the triangle list costs less than
+   *  shipping a bounds table across the worker boundary for all of them. */
+  private shellBounds(shellIndex: number): Bounds | null {
+    if (!this.meshData) return null
+    const { positions, indices, shellIds } = this.meshData
+    const min: [number, number, number] = [Infinity, Infinity, Infinity]
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity]
+    let found = false
+
+    for (let t = 0; t < shellIds.length; t++) {
+      if (shellIds[t] !== shellIndex) continue
+      found = true
+      for (let corner = 0; corner < 3; corner++) {
+        const v = indices[t * 3 + corner]!
+        for (let axis = 0; axis < 3; axis++) {
+          const value = positions[v * 3 + axis]!
+          if (value < min[axis]!) min[axis] = value
+          if (value > max[axis]!) max[axis] = value
+        }
+      }
+    }
+    if (!found) return null
+
+    return {
+      min,
+      max,
+      size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+      center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+    }
+  }
+
   /** Paint one shell in the isolation colour and drop everything else back,
    *  so a model made of several solids can be taken apart by eye.
    *
@@ -826,6 +905,10 @@ export class Viewport {
    *  demand from the shell ids rather than kept around for every shell,
    *  because a part can have hundreds and only one is ever shown. */
   highlightShell(shellIndex: number | null): void {
+    // The box belongs to the selection, so it is drawn and cleared here
+    // rather than by a second call the two could get out of step on.
+    this.buildPartBox(shellIndex === null ? null : this.shellBounds(shellIndex))
+
     if (this.shellHighlight) {
       this.modelGroup.remove(this.shellHighlight)
       disposeObject(this.shellHighlight)
@@ -934,6 +1017,7 @@ export class Viewport {
     this.clearRepair()
     this.clearGround()
     this.clearBox()
+    this.buildPartBox(null)
     this.clearPlate()
     this.renderer.dispose()
   }

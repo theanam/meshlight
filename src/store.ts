@@ -21,6 +21,11 @@ export interface State {
   showBox: boolean
   /** The build plate under the model. Off until a bed is picked. */
   showPlate: boolean
+  /** Click a part in the viewport to select it. Off by default: with it on,
+   *  a click is a selection rather than the start of an orbit. */
+  pickParts: boolean
+  /** Shell index selected in the viewport or the report, or null. */
+  selectedShell: number | null
   filter: IssueFilter
   /** Index into the filtered issue list, or null when nothing is selected. */
   selectedIssue: number | null
@@ -73,6 +78,8 @@ function initialState(): State {
     showBox: true,
     // Follow the bed picked last time rather than defaulting off every visit.
     showPlate: settings.platePreset !== 'none',
+    pickParts: false,
+    selectedShell: null,
     filter: 'all',
     selectedIssue: null,
     expandedIssue: null,
