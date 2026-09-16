@@ -25,10 +25,12 @@ function serviceWorker(): Plugin {
     apply: 'build',
     closeBundle() {
       const outDir = resolve(__dirname, 'dist')
-      // sw.js cannot precache itself, and CNAME is an instruction to GitHub
-      // Pages rather than something the app ever fetches.
+      // sw.js cannot precache itself, and the rest are for GitHub Pages and
+      // for crawlers — the app never fetches any of them, so precaching them
+      // would only spend a first-visit download on bytes nobody reads offline.
+      const notForTheApp = new Set(['sw.js', 'CNAME', 'robots.txt', 'sitemap.xml', 'og.png'])
       const files = listFiles(outDir)
-        .filter((file) => file !== 'sw.js' && file !== 'CNAME')
+        .filter((file) => !notForTheApp.has(file))
         .sort()
 
       // Hash the file list so every build gets its own cache bucket and the

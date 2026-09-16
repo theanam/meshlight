@@ -1,13 +1,24 @@
 {
   "name": "Meshlight",
   "short_name": "Meshlight",
-  "description": "Offline STL mesh inspector — errors, printability score, slice viewer.",
+  "description": "Offline mesh inspector for 3D printing \u2014 reads STL, OBJ, PLY and 3MF, finds mesh errors, scores printability and repairs them.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
   "background_color": "#07090D",
   "theme_color": "#07090D",
   "icons": [
-    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
-  ]
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "productivity",
+    "utilities",
+    "graphics"
+  ],
+  "lang": "en"
 }
