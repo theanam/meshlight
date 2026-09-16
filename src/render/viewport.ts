@@ -32,7 +32,7 @@ const GRID_LABEL_PLATE = '#6f8299'
 /** The bounding box is a measuring aid, not part of the model, so it sits
  *  barely above the background — present when looked for, ignorable when not. */
 const BOX_LINE = 0x3f4c61
-const BOX_LABEL = '#9aa7ba'
+const BOX_LABEL = '#aab7c9'
 
 /** Dihedral angle, in degrees, above which an edge counts as a real corner
  *  rather than tessellation of a curve. */
@@ -223,14 +223,77 @@ export class Viewport {
 
     const [sx, sy, sz] = this.bounds.size
     const [cx, cy, cz] = this.bounds.center
-    const height = (this.major || Math.max(sx, sy, sz) / 10) * 0.3
-    const gap = height * 0.8
-    // One dimension per axis, on the edge it measures: width along the front
-    // bottom edge, depth down the left one, height up the near vertical. Each
-    // is named, because three bare numbers in space do not say which is which.
-    this.addLabel(this.boxGroup, `X ${fmtDim(sx)}`, [cx, y0 - gap, z0], [0.5, 1], height, BOX_LABEL)
-    this.addLabel(this.boxGroup, `Y ${fmtDim(sy)}`, [x1 + gap, cy, z0], [0, 0.5], height, BOX_LABEL)
-    this.addLabel(this.boxGroup, `Z ${fmtDim(sz)}`, [x0 - gap, y0 - gap, cz], [1, 0.5], height, BOX_LABEL)
+    // Bigger than a grid tick: lying along an edge costs these a lot of
+    // apparent size to foreshortening, and they are the measurement the box
+    // exists to give.
+    const height = (this.major || Math.max(sx, sy, sz) / 10) * 0.42
+    const gap = height * 0.7
+    // One dimension per axis, written along the edge it measures and just
+    // clear of it: width on the front bottom edge, depth on the right-hand
+    // one, height up the near vertical. Each is named, because three bare
+    // numbers in space do not say which is which.
+    const V = THREE.Vector3
+    this.addEdgeLabel(
+      `X ${fmtDim(sx)}`,
+      new V(cx, y0 - gap, z0),
+      new V(1, 0, 0),
+      new V(0, 1, 0),
+      height,
+    )
+    this.addEdgeLabel(
+      `Y ${fmtDim(sy)}`,
+      new V(x1 + gap, cy, z0),
+      new V(0, 1, 0),
+      new V(-1, 0, 0),
+      height,
+    )
+    this.addEdgeLabel(
+      `Z ${fmtDim(sz)}`,
+      new V(x0 - gap, y0, cz),
+      new V(0, 0, 1),
+      new V(-1, 0, 0),
+      height,
+    )
+  }
+
+  /** A line of text lying in world space along a box edge.
+   *
+   *  A billboard that swings to face the camera reads as a tag floating near
+   *  the part; a dimension belongs on the line it measures, the way it is
+   *  drawn on any engineering drawing. So this is a textured quad with a
+   *  fixed orientation: `along` runs left-to-right through the glyphs, `up`
+   *  is the direction they stand in, and the quad's facing falls out of the
+   *  two. Both are unit axes here, so the cross product needs no normalising.
+   *
+   *  The trade is that text on a face turned away from you reads mirrored,
+   *  which is the same trade a drawing makes. */
+  private addEdgeLabel(
+    text: string,
+    centre: THREE.Vector3,
+    along: THREE.Vector3,
+    up: THREE.Vector3,
+    height: number,
+  ): void {
+    const canvas = textCanvas(text, BOX_LABEL)
+    if (!canvas) return
+
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(height * (canvas.width / canvas.height), height),
+      new THREE.MeshBasicMaterial({
+        map: textTexture(canvas),
+        transparent: true,
+        depthWrite: false,
+        // Same layer as the box lines: the annotation reads as one overlay
+        // rather than half of it sinking into the part.
+        depthTest: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    const facing = new THREE.Vector3().crossVectors(along, up)
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, up, facing))
+    mesh.position.copy(centre)
+    mesh.renderOrder = 2
+    this.boxGroup.add(mesh)
   }
 
   private clearBox(): void {
@@ -360,27 +423,9 @@ export class Viewport {
     height: number,
     color: string = GRID_LABEL,
   ): void {
-    const fontPx = 40
-    const pad = 8
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d')
-    if (!context) return
-
-    const font = `500 ${fontPx}px "JetBrains Mono", ui-monospace, monospace`
-    context.font = font
-    canvas.width = Math.ceil(context.measureText(text).width) + pad * 2
-    canvas.height = fontPx + pad * 2
-    // Resizing a canvas resets its context, so the font has to be set again.
-    context.font = font
-    context.fillStyle = color
-    context.textAlign = 'center'
-    context.textBaseline = 'middle'
-    context.fillText(text, canvas.width / 2, canvas.height / 2)
-
-    const texture = new THREE.CanvasTexture(canvas)
-    texture.colorSpace = THREE.SRGBColorSpace
-    texture.minFilter = THREE.LinearFilter
-    texture.generateMipmaps = false
+    const canvas = textCanvas(text, color)
+    if (!canvas) return
+    const texture = textTexture(canvas)
 
     const sprite = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }),
@@ -802,4 +847,34 @@ function fmtMm(value: number): string {
  *  decimals — the same precision the report quotes defect coordinates in. */
 function fmtDim(value: number): string {
   return value.toFixed(2)
+}
+
+/** Draw one line of text onto its own canvas, sized tight to the glyphs plus
+ *  a small pad, ready to become a texture. */
+function textCanvas(text: string, color: string): HTMLCanvasElement | null {
+  const fontPx = 40
+  const pad = 8
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+  if (!context) return null
+
+  const font = `500 ${fontPx}px "JetBrains Mono", ui-monospace, monospace`
+  context.font = font
+  canvas.width = Math.ceil(context.measureText(text).width) + pad * 2
+  canvas.height = fontPx + pad * 2
+  // Resizing a canvas resets its context, so the font has to be set again.
+  context.font = font
+  context.fillStyle = color
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillText(text, canvas.width / 2, canvas.height / 2)
+  return canvas
+}
+
+function textTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.minFilter = THREE.LinearFilter
+  texture.generateMipmaps = false
+  return texture
 }
