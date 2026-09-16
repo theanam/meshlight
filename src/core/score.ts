@@ -1,3 +1,4 @@
+import { plateFit } from './footprint'
 import type { Analysis, IndexedMesh, Score, ScoreComponent, Settings } from './types'
 
 /** Spec §12 flags these as needing real-world tuning, so they live in one
@@ -246,23 +247,34 @@ export function scoreMesh(
   })
 
   // --- Build volume -----------------------------------------------------
-  // Try the part both ways round on the plate before calling it too big.
+  // You are free to turn the part about Z before printing, so the question is
+  // whether any orientation fits — not whether the axis-aligned extents do. A
+  // bar lying diagonally measures its own diagonal on both axes and would be
+  // called too big for a plate it drops onto with room to spare.
   const [bx, by, bz] = settings.buildVolume
   const [sx, sy, sz] = bounds.size
-  const fitsUpright = sx <= bx && sy <= by && sz <= bz
-  const fitsRotated = sy <= bx && sx <= by && sz <= bz
-  const fits = fitsUpright || fitsRotated
-  const worstAxis = Math.max(sx / bx, sy / by, sz / bz)
+  const plate = plateFit(mesh.positions, bx, by)
+  const width = plate ? plate.width : sx
+  const depth = plate ? plate.depth : sy
+  const turn = plate ? (plate.angle * 180) / Math.PI : 0
+  const needsTurn = turn > 0.05
+  const fits = (plate ? plate.fits : sx <= bx && sy <= by) && sz <= bz
+  const worstAxis = Math.max(width / bx, depth / by, sz / bz)
+  const size = `${fmt(width)} × ${fmt(depth)} × ${fmt(sz)} mm`
   components.push({
     label: 'Fits build volume',
     ratio: fits ? 1 : clamp01(1 - (worstAxis - 1)),
     weight: SCORE_WEIGHTS.buildVolume,
-    note: fits
-      ? `${fmt(sx)} × ${fmt(sy)} × ${fmt(sz)} mm on a ${bx} × ${by} × ${bz} mm plate.`
-      : `${fmt(sx)} × ${fmt(sy)} × ${fmt(sz)} mm is larger than your ${bx} × ${by} × ${bz} mm plate.`,
-    help: fits
-      ? 'Nothing to do here.'
-      : 'Scale it down, split it into parts, or set your real build volume in Setup.',
+    note: !fits
+      ? `${size} at its best angle is larger than your ${bx} × ${by} × ${bz} mm plate.`
+      : needsTurn
+        ? `Fits your ${bx} × ${by} × ${bz} mm plate turned ${turn.toFixed(0)}° — ${size} at that angle.`
+        : `${size} on a ${bx} × ${by} × ${bz} mm plate.`,
+    help: !fits
+      ? 'Scale it down, split it into parts, or set your real build volume in Setup.'
+      : needsTurn
+        ? `Rotate it ${turn.toFixed(0)}° about Z in your slicer before printing.`
+        : 'Nothing to do here.',
     status: fits ? 'pass' : 'fail',
   })
 

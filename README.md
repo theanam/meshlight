@@ -106,8 +106,15 @@ what to do about it:
 | Supports | How much of the surface area leans past your overhang angle, excluding the faces resting on the plate |
 | Bed adhesion | How much of the part lies flat on the plate, and over what area — a small footprint wants a brim |
 | Stability | Height against the narrowest footprint dimension; tall and narrow parts ring and shear off |
-| Plate fit | Whether it fits as it stands, only if rotated, or not at all |
+| Plate fit | Whether it fits as it stands, only once turned — and by how many degrees — or not at all |
 | Separate bodies | How many solids will be printed, and how many start in mid-air |
+
+Plate fit is asked over every orientation the part could be turned to, not just
+the two the axes happen to offer. A bar lying diagonally measures its own
+diagonal on both axes: 200 × 30 mm at 45° reads as 155 × 155, which is true of
+the extents and wrong about the bed. The search is exhaustive rather than
+sampled — a convex footprint that fits a rectangle at all fits with one of its
+own hull edges parallel to a bed side, so trying each of those settles it.
 
 Everything is measured, not guessed. Overhangs are weighted by area rather than
 face count, so one large downward face outranks a thousand tiny ones on a

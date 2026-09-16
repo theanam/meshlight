@@ -19,6 +19,43 @@ export interface Footprint {
   center: [number, number]
 }
 
+/** The full-mesh hull, kept per positions buffer.
+ *
+ *  Scoring and the readiness checks both ask about the same footprint, and
+ *  both re-run whenever a setting changes. The buffer is stable for the life
+ *  of a loaded mesh, so the hull is worth computing once rather than four
+ *  times per settings keystroke. */
+const fullHulls = new WeakMap<Float32Array, number[]>()
+
+function hullFor(points: Float32Array, indices: Uint32Array | null): number[] {
+  if (indices) return convexHullXY(points, indices)
+  const cached = fullHulls.get(points)
+  if (cached) return cached
+  const all = new Uint32Array(points.length / 3)
+  for (let v = 0; v < all.length; v++) all[v] = v
+  const hull = convexHullXY(points, all)
+  fullHulls.set(points, hull)
+  return hull
+}
+
+/** Extents of the hull measured in a frame turned by `angle`. */
+function extentsAt(points: Float32Array, hull: number[], angle: number): [number, number] {
+  const ux = Math.cos(angle)
+  const uy = Math.sin(angle)
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity
+  for (const h of hull) {
+    const x = points[h * 3]!
+    const y = points[h * 3 + 1]!
+    const u = x * ux + y * uy
+    const v = -x * uy + y * ux
+    if (u < minU) minU = u
+    if (u > maxU) maxU = u
+    if (v < minV) minV = v
+    if (v > maxV) maxV = v
+  }
+  return [maxU - minU, maxV - minV]
+}
+
 /** Andrew's monotone chain, over an index list so the points never leave the
  *  typed array they came in. Returns hull vertex indices counter-clockwise. */
 function convexHullXY(points: Float32Array, indices: Uint32Array): number[] {
@@ -52,9 +89,14 @@ function convexHullXY(points: Float32Array, indices: Uint32Array): number[] {
 /** Rotating calipers. The minimal-area enclosing rectangle always has a side
  *  lying along a hull edge, so trying each edge in turn is exhaustive rather
  *  than a search — there is no angle between two edges that could do better. */
-export function orientedFootprint(points: Float32Array, indices: Uint32Array): Footprint | null {
-  if (indices.length === 0) return null
-  const hull = convexHullXY(points, indices)
+export function orientedFootprint(
+  points: Float32Array,
+  /** Which vertices to measure, or null for every vertex — which is cached. */
+  indices: Uint32Array | null,
+): Footprint | null {
+  if (indices !== null && indices.length === 0) return null
+  if (points.length === 0) return null
+  const hull = hullFor(points, indices)
   if (hull.length < 2) return null
 
   let best: Footprint | null = null
@@ -107,4 +149,59 @@ export function orientedFootprint(points: Float32Array, indices: Uint32Array): F
     ;[width, depth] = [depth, width]
   }
   return { angle, width, depth, center: best.center }
+}
+
+/** Whether the part fits a bed of bedX x bedY, given that you are free to turn
+ *  it about Z before printing.
+ *
+ *  Not the same question as the minimal-area rectangle. Smallest is not the
+ *  same as fits: a longer, narrower orientation can drop onto a bed that the
+ *  tightest box overruns, because a bed has an aspect ratio of its own.
+ *
+ *  Every orientation worth trying is one where a hull edge lies parallel to a
+ *  bed side, so the candidate list is the hull's own edge directions and their
+ *  quarter turns, plus square-on. That is the whole search, not a sample. */
+export interface PlateFit {
+  fits: boolean
+  /** Rotation about Z to apply, in radians, in [0, π). Zero when it already
+   *  fits as it stands. */
+  angle: number
+  /** Footprint along the bed's X at that rotation. */
+  width: number
+  /** Footprint along the bed's Y at that rotation. */
+  depth: number
+  /** How far it still overruns the bed at its best orientation, in mm. */
+  overflow: number
+}
+
+export function plateFit(points: Float32Array, bedX: number, bedY: number): PlateFit | null {
+  if (points.length === 0) return null
+  const hull = hullFor(points, null)
+  if (hull.length === 0) return null
+
+  const half = Math.PI / 2
+  const angles = [0]
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i]!
+    const b = hull[(i + 1) % hull.length]!
+    const ex = points[b * 3]! - points[a * 3]!
+    const ey = points[b * 3 + 1]! - points[a * 3 + 1]!
+    if (Math.hypot(ex, ey) < 1e-9) continue
+    const edge = Math.atan2(ey, ex)
+    angles.push(edge, edge + half)
+  }
+
+  let best: PlateFit | null = null
+  for (const angle of angles) {
+    const [width, depth] = extentsAt(points, hull, angle)
+    const overflow = Math.max(0, width - bedX, depth - bedY)
+    // Ties go to the smaller turn, so a part that fits as it stands is never
+    // told to rotate for nothing.
+    const turn = ((angle % Math.PI) + Math.PI) % Math.PI
+    if (best && (overflow > best.overflow || (overflow === best.overflow && turn >= best.angle))) {
+      continue
+    }
+    best = { fits: overflow <= 0, angle: turn, width, depth, overflow }
+  }
+  return best
 }

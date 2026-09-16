@@ -1,3 +1,4 @@
+import { plateFit } from './footprint'
 import { measureThinWalls } from './score'
 import type { Analysis, IndexedMesh, Settings } from './types'
 
@@ -214,11 +215,20 @@ export function assessReadiness(
   }
 
   // --- Plate fit --------------------------------------------------------
+  // Measured over every orientation the part could be turned to, not just the
+  // two the axes happen to offer. A part lying diagonally measures its own
+  // diagonal on both axes, which is the wrong number to compare to a bed.
   const [bvx, bvy, bvz] = settings.buildVolume
-  const fitsUpright = sx <= bvx && sy <= bvy && sz <= bvz
-  const fitsRotated = sy <= bvx && sx <= bvy && sz <= bvz
-  const size = `${mm(sx)} × ${mm(sy)} × ${mm(sz)} mm`
-  if (fitsUpright) {
+  const plate = plateFit(mesh.positions, bvx, bvy)
+  const width = plate ? plate.width : sx
+  const depth = plate ? plate.depth : sy
+  const turn = plate ? (plate.angle * 180) / Math.PI : 0
+  const needsTurn = turn > 0.05
+  const tooTall = sz > bvz
+  const footprintFits = plate ? plate.fits : sx <= bvx && sy <= bvy
+  const size = `${mm(width)} × ${mm(depth)} × ${mm(sz)} mm`
+
+  if (footprintFits && !tooTall && !needsTurn) {
     checks.push({
       id: 'fit',
       title: 'Plate fit',
@@ -227,23 +237,24 @@ export function assessReadiness(
       advice: 'Nothing to do here.',
       status: 'pass',
     })
-  } else if (fitsRotated) {
+  } else if (footprintFits && !tooTall) {
     checks.push({
       id: 'fit',
       title: 'Plate fit',
       metric: size,
-      finding: `Only fits your ${bvx} × ${bvy} × ${bvz} mm plate turned 90° about Z.`,
+      finding: `Fits your ${bvx} × ${bvy} × ${bvz} mm plate only once turned ${turn.toFixed(0)}° about Z — ${size} at that angle.`,
       advice: 'Rotate it in your slicer before you print, or it will be clipped at the edge.',
       status: 'warn',
     })
   } else {
-    const over = Math.max(sx - bvx, sy - bvy, sz - bvz)
-    const axis = sz - bvz === over ? 'Z' : sx - bvx === over ? 'X' : 'Y'
+    const over = tooTall
+      ? { by: sz - bvz, axis: 'height' }
+      : { by: plate ? plate.overflow : Math.max(sx - bvx, sy - bvy), axis: 'the plate' }
     checks.push({
       id: 'fit',
       title: 'Plate fit',
       metric: size,
-      finding: `Overruns your ${bvx} × ${bvy} × ${bvz} mm build volume by ${mm(over)} mm on ${axis}, whichever way round it goes.`,
+      finding: `Overruns your ${bvx} × ${bvy} × ${bvz} mm build volume by ${mm(over.by)} mm on ${over.axis}, at the best angle it can be turned to.`,
       advice: 'Scale it down, cut it into parts and join them afterwards, or set your real build volume in Setup.',
       status: 'fail',
     })

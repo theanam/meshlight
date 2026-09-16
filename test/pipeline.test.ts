@@ -5,7 +5,7 @@
 import { analyseMesh } from '../src/core/analysis'
 import { indexMesh } from '../src/core/indexer'
 import { scoreMesh } from '../src/core/score'
-import { orientedFootprint } from '../src/core/footprint'
+import { orientedFootprint, plateFit } from '../src/core/footprint'
 import { buildZBuckets, sectionAt } from '../src/core/section'
 // Aliased: this file has its own toBinaryStl fixture helper.
 import { repairMesh, toBinaryStl as exportStl } from '../src/core/repair'
@@ -766,6 +766,25 @@ console.log('\nmalformed input')
     return [round(f.center[0]), round(f.center[1])]
   })(), [12, -5])
   check('no points, no footprint', orientedFootprint(new Float32Array(0), new Uint32Array(0)), null)
+
+  console.log('\nplate fit: every orientation, not just the two the axes offer')
+
+  // A 200 x 30 bar laid at 45 degrees measures 162.6 x 162.6 axis-aligned, so
+  // comparing extents to the bed calls it far too big for a plate it drops
+  // onto with 10 mm to spare once turned back.
+  const diagonalBar = turnedRect(200, 30, 45)
+  const onNarrowBed = plateFit(diagonalBar, 210, 40)!
+  check('diagonal bar fits once turned', onNarrowBed.fits, true)
+  check('and the turn is reported', round((onNarrowBed.angle * 180) / Math.PI), 45)
+  check('at its real size', [round(onNarrowBed.width), round(onNarrowBed.depth)], [200, 30])
+
+  const squareOn = plateFit(turnedRect(100, 50, 0), 200, 200)!
+  check('a part that already fits is not told to turn', squareOn.angle, 0)
+  check('and it fits', squareOn.fits, true)
+
+  const tooBig = plateFit(turnedRect(300, 30, 20), 210, 40)!
+  check('too big at every angle', tooBig.fits, false)
+  check('overflow is measured at the best angle', round(tooBig.overflow), 90)
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`)

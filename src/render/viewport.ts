@@ -220,11 +220,8 @@ export class Viewport {
     const { positions, indices, shellIds } = this.meshData
     const vertexCount = positions.length / 3
 
-    if (shellIndex === null) {
-      const all = new Uint32Array(vertexCount)
-      for (let v = 0; v < vertexCount; v++) all[v] = v
-      return orientedFootprint(positions, all)
-    }
+    // null means every vertex, which footprint.ts caches per buffer.
+    if (shellIndex === null) return orientedFootprint(positions, null)
 
     const used = new Uint8Array(vertexCount)
     let count = 0
