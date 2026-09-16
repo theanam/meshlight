@@ -84,7 +84,11 @@ export function mountApp(root: HTMLElement): void {
   const viewport = new Viewport(canvas)
   // Clicking a face looks from that face; the cube follows the camera through
   // the viewport's per-frame callback rather than polling it.
-  const navCube = new NavCube(cubeCanvas, (direction) => viewport.orientTo(direction))
+  const navCube = new NavCube(
+    cubeCanvas,
+    (direction) => viewport.orientTo(direction),
+    (theta, phi) => viewport.orbitBy(theta, phi),
+  )
   viewport.onFrame = (orientation) => navCube.sync(orientation)
   const worker = new Worker(new URL('../worker/mesh.worker.ts', import.meta.url), { type: 'module' })
 

@@ -40,6 +40,9 @@ const FACES: { normal: ViewDirection; name: string; spin: number }[] = [
 
 const HALF = 1
 
+/** Past this much travel a press is a drag, not a click on a face. */
+const DRAG_SLOP = 3
+
 /** A view cube: which way you are looking, and a click to look somewhere else.
  *
  *  Its own canvas and renderer rather than a scissored corner of the main one.
@@ -58,9 +61,17 @@ export class NavCube {
   private readonly raycaster = new THREE.Raycaster()
   private hovered = -1
 
+  private pressX = 0
+  private pressY = 0
+  private lastX = 0
+  private lastY = 0
+  private pressed = false
+  private dragged = false
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly onPick: (direction: ViewDirection) => void,
+    private readonly onOrbit: (deltaTheta: number, deltaPhi: number) => void,
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -92,9 +103,10 @@ export class NavCube {
     this.addAxes()
     this.scene.add(this.group)
 
+    canvas.addEventListener('pointerdown', this.onDown)
     canvas.addEventListener('pointermove', this.onMove)
+    canvas.addEventListener('pointerup', this.onUp)
     canvas.addEventListener('pointerleave', this.onLeave)
-    canvas.addEventListener('click', this.onClick)
   }
 
   /** The triad runs out of the cube's near-bottom-left corner, along the three
@@ -104,17 +116,47 @@ export class NavCube {
     const corner = new THREE.Vector3(-HALF, -HALF, -HALF)
     const reach = HALF * 2.5
 
+    const headLength = 0.34
+    const up = new THREE.Vector3(0, 1, 0)
+
     for (const axis of AXES) {
-      const tip = corner.clone().add(new THREE.Vector3(...axis.dir).multiplyScalar(reach))
-      const geometry = new THREE.BufferGeometry().setFromPoints([corner, tip])
-      this.group.add(
-        new THREE.Line(
-          geometry,
-          // Depth-tested on purpose: an arm runs along a cube edge, and drawing
-          // it over the faces instead turns the widget into a scribble.
-          new THREE.LineBasicMaterial({ color: axis.color, transparent: true }),
-        ),
-      )
+      const direction = new THREE.Vector3(...axis.dir)
+      const tip = corner.clone().addScaledVector(direction, reach)
+      // The shaft stops where the head starts, so the two do not show through
+      // each other at the join.
+      const shaftEnd = tip.clone().addScaledVector(direction, -headLength)
+      const shaft = new THREE.BufferGeometry().setFromPoints([corner, shaftEnd])
+      // A cone points along its own +Y, so it is turned onto the axis.
+      const head = new THREE.ConeGeometry(0.1, headLength, 14)
+      const turn = new THREE.Quaternion().setFromUnitVectors(up, direction)
+      const headAt = tip.clone().addScaledVector(direction, -headLength / 2)
+
+      // Each arm is drawn twice: solid where the cube does not cover it, and
+      // faint where it does.
+      //
+      // Depth-testing alone loses an axis completely — the +Y arm runs along
+      // the cube's back-bottom edge, which from the opening view is behind two
+      // faces, so the widget showed two axes and a floating letter. Ignoring
+      // depth instead puts a bright line across the front face, which reads as
+      // a scratch on the glass. The ghost says "it continues behind here",
+      // which is the true answer and the one that keeps all three legible from
+      // every angle.
+      for (const ghost of [false, true]) {
+        const material = {
+          color: axis.color,
+          transparent: true,
+          opacity: ghost ? 0.32 : 1,
+          // The ghost ignores depth so it shows through the cube, and draws
+          // after it so the cube cannot cover it again.
+          depthTest: !ghost,
+        }
+        const line = new THREE.Line(shaft, new THREE.LineBasicMaterial(material))
+        const cone = new THREE.Mesh(head, new THREE.MeshBasicMaterial(material))
+        cone.quaternion.copy(turn)
+        cone.position.copy(headAt)
+        if (ghost) line.renderOrder = cone.renderOrder = 1
+        this.group.add(line, cone)
+      }
 
       const canvas = textCanvas(axis.label, axis.text)
       if (!canvas) continue
@@ -149,8 +191,64 @@ export class NavCube {
     return hit?.face ? Math.floor(hit.faceIndex! / 2) : -1
   }
 
+  private readonly onDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return
+    this.pressed = true
+    this.dragged = false
+    this.pressX = this.lastX = event.clientX
+    this.pressY = this.lastY = event.clientY
+    this.canvas.setPointerCapture(event.pointerId)
+  }
+
   private readonly onMove = (event: PointerEvent): void => {
+    if (this.pressed) {
+      // Past the slop it is a drag, and stays one until the button comes up.
+      // Otherwise a gesture that moves and then pauses would snap a face out
+      // from under the hand.
+      const travelled = Math.hypot(event.clientX - this.pressX, event.clientY - this.pressY)
+      if (!this.dragged && travelled > DRAG_SLOP) {
+        this.dragged = true
+        this.setHover(-1)
+        this.canvas.style.cursor = 'grabbing'
+      }
+      if (this.dragged) {
+        // A full turn per three canvas widths. Tied to the canvas rather than
+        // fixed in pixels so the feel survives a resize, but far slower than
+        // the widget's own size would suggest: at one turn per canvas a flick
+        // of the wrist spins the model twice and you lose track of the part.
+        const span = Math.max(this.canvas.getBoundingClientRect().height, 1) * 3
+        this.onOrbit(
+          ((event.clientX - this.lastX) / span) * Math.PI * 2,
+          ((event.clientY - this.lastY) / span) * Math.PI * 2,
+        )
+        this.lastX = event.clientX
+        this.lastY = event.clientY
+      }
+      return
+    }
+    this.setHover(this.pick(event))
+  }
+
+  private readonly onUp = (event: PointerEvent): void => {
+    if (!this.pressed) return
+    this.pressed = false
+    if (this.canvas.hasPointerCapture(event.pointerId)) {
+      this.canvas.releasePointerCapture(event.pointerId)
+    }
+    this.canvas.style.cursor = ''
+    if (this.dragged) {
+      this.setHover(this.pick(event))
+      return
+    }
     const face = this.pick(event)
+    if (face !== -1) this.onPick(FACES[face]!.normal)
+  }
+
+  private readonly onLeave = (): void => {
+    if (!this.pressed) this.setHover(-1)
+  }
+
+  private setHover(face: number): void {
     if (face === this.hovered) return
     this.hovered = face
     this.canvas.style.cursor = face === -1 ? '' : 'pointer'
@@ -160,19 +258,11 @@ export class NavCube {
     )
   }
 
-  private readonly onLeave = (): void => {
-    this.onMove({ clientX: -1e6, clientY: -1e6 } as PointerEvent)
-  }
-
-  private readonly onClick = (event: MouseEvent): void => {
-    const face = this.pick(event)
-    if (face !== -1) this.onPick(FACES[face]!.normal)
-  }
-
   dispose(): void {
+    this.canvas.removeEventListener('pointerdown', this.onDown)
     this.canvas.removeEventListener('pointermove', this.onMove)
+    this.canvas.removeEventListener('pointerup', this.onUp)
     this.canvas.removeEventListener('pointerleave', this.onLeave)
-    this.canvas.removeEventListener('click', this.onClick)
     this.scene.traverse((child) => {
       const any = child as Partial<THREE.Mesh>
       any.geometry?.dispose()

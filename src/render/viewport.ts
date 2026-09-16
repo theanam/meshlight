@@ -54,6 +54,8 @@ const PART_BOX_LABEL = '#aab4ff'
 const FEATURE_EDGE_ANGLE = 22
 const FEATURE_EDGE_LIMIT = 400_000
 
+const UP_Y = new THREE.Vector3(0, 1, 0)
+
 export type HighlightKey = keyof Highlights
 
 export class Viewport {
@@ -168,6 +170,31 @@ export class Viewport {
     this.camera.up.set(0, 0, 1)
     if (Math.abs(from.z) > 0.999) this.camera.up.set(0, 1, 0)
     this.camera.position.copy(target).addScaledVector(from, distance)
+    this.controls.update()
+  }
+
+  /** Swing the camera around the model, in radians.
+   *
+   *  The same spherical walk OrbitControls does for a drag on the viewport,
+   *  so dragging the cube and dragging the model feel like one gesture. The
+   *  quaternion pair is what lets it work with a Z-up camera: the maths is in
+   *  Y-up spherical coordinates, so the offset is rotated into that frame and
+   *  back out again. */
+  orbitBy(deltaTheta: number, deltaPhi: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target)
+    const toYUp = new THREE.Quaternion().setFromUnitVectors(this.camera.up, UP_Y)
+    const fromYUp = toYUp.clone().invert()
+
+    const spherical = new THREE.Spherical().setFromVector3(offset.applyQuaternion(toYUp))
+    spherical.theta -= deltaTheta
+    // Stopping just short of the poles: straight overhead has no heading, and
+    // crossing it flips the model over for no reason the hand can feel.
+    spherical.phi = Math.max(1e-4, Math.min(Math.PI - 1e-4, spherical.phi - deltaPhi))
+
+    this.camera.position
+      .copy(this.controls.target)
+      .add(offset.setFromSpherical(spherical).applyQuaternion(fromYUp))
+    this.camera.lookAt(this.controls.target)
     this.controls.update()
   }
 
