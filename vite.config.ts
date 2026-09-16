@@ -25,8 +25,10 @@ function serviceWorker(): Plugin {
     apply: 'build',
     closeBundle() {
       const outDir = resolve(__dirname, 'dist')
+      // sw.js cannot precache itself, and CNAME is an instruction to GitHub
+      // Pages rather than something the app ever fetches.
       const files = listFiles(outDir)
-        .filter((file) => file !== 'sw.js')
+        .filter((file) => file !== 'sw.js' && file !== 'CNAME')
         .sort()
 
       // Hash the file list so every build gets its own cache bucket and the
@@ -44,8 +46,9 @@ function serviceWorker(): Plugin {
   }
 }
 
-// base is '' so the build works from any GitHub Pages sub-path
-// (user.github.io/meshlight/) without hardcoding the repo name.
+// base is '' so every asset is referenced relatively: the same build serves
+// from the custom domain at the root (meshlight.org) and from a GitHub Pages
+// project sub-path (user.github.io/meshlight/), with nothing hardcoded.
 export default defineConfig({
   base: '',
   plugins: [serviceWorker()],

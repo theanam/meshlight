@@ -10,7 +10,7 @@ Nothing is uploaded. There is no server to upload to. The file is read in your
 browser tab and never leaves it, which is a property of how the app is built
 rather than a policy you have to take on trust.
 
-**[Open Meshlight](https://theanam.github.io/meshlight/)**
+**[meshlight.org](https://meshlight.org)**
 
 - **Free and open source** (MIT)
 - **100% client-side** — no backend, no accounts, no data collection
@@ -123,13 +123,23 @@ Requires Node 20+.
 
 Pushing to `main` builds and publishes to GitHub Pages via
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). `base` is `''`,
-so the build works from a project sub-path without any configuration.
+so every asset is referenced relatively and the same build works from a custom
+domain at the root or from a project sub-path.
 
-**This needs one repository setting before the first deploy can succeed:**
-Settings → Pages → Source → **GitHub Actions**. Until it is set, the workflow
-fails at `configure-pages` with `Get Pages site failed ... Not Found`. It cannot
-be done from the workflow: `GITHUB_TOKEN` may read a Pages site but not create
-one, so `enablement: true` fails with `Resource not accessible by integration`.
+The site is served from **meshlight.org**. The domain lives in two places and
+needs both: the apex `A` records point at GitHub's four Pages addresses, and
+[`public/CNAME`](public/CNAME) carries it into `dist/` on every build, so a
+deploy cannot leave the Pages configuration without a domain to serve from.
+
+Two settings under Settings → Pages, each needed once:
+
+- **Source → GitHub Actions.** Without it the workflow fails at
+  `configure-pages` with `Get Pages site failed ... Not Found`. It cannot be
+  done from the workflow — `GITHUB_TOKEN` may read a Pages site but not create
+  one, so `enablement: true` fails with `Resource not accessible by integration`.
+- **Enforce HTTPS**, once GitHub has issued the certificate for the domain.
+  This one is not cosmetic: service workers only register in a secure context,
+  so until the certificate is live the offline guarantee below does not hold.
 
 ---
 
