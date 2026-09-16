@@ -84,7 +84,6 @@ export class Viewport {
   private buildVolume: [number, number, number] = [220, 220, 250]
   private plateName: string | null = null
   private step = 0
-  private major = 0
   private frame = 0
 
   /** Spacing of one grid cell, in mm, so the interface can say what a square
@@ -214,6 +213,21 @@ export class Viewport {
 
   /** The box for one picked part, drawn in the selection colour so it reads as
    *  belonging to the shell highlighted underneath it. */
+  /** Drop the model's own box back while a part is selected. Two sets of
+   *  dimensions at full strength read as one overlapping jumble, and the
+   *  question being asked at that moment is about the part. */
+  private dimModelBox(dimmed: boolean): void {
+    this.boxGroup.traverse((child) => {
+      const material = (child as Partial<THREE.Mesh>).material
+      for (const one of Array.isArray(material) ? material : material ? [material] : []) {
+        const base = (one.userData.baseOpacity as number | undefined) ?? one.opacity
+        one.userData.baseOpacity = base
+        one.opacity = dimmed ? base * 0.22 : base
+        one.transparent = true
+      }
+    })
+  }
+
   private buildPartBox(bounds: Bounds | null): void {
     for (const child of [...this.partGroup.children]) {
       this.partGroup.remove(child)
@@ -256,10 +270,23 @@ export class Viewport {
 
     const [sx, sy, sz] = bounds.size
     const [cx, cy, cz] = bounds.center
-    // Bigger than a grid tick: lying along an edge costs these a lot of
-    // apparent size to foreshortening, and they are the measurement the box
-    // exists to give.
-    const height = (this.major || Math.max(sx, sy, sz) / 10) * 0.42
+    // Sized off the model, not off this box and not off the grid.
+    //
+    // Off the grid was the original bug: the major step moves in 1-2-5 jumps,
+    // so a 552 mm model lands on a 100 mm major and gets 42 mm text, while an
+    // 80 mm one lands on 10 and gets 4 — the same design at two scales, four
+    // times heavier at one of them.
+    //
+    // Off this box is wrong for a different reason: the camera frames the
+    // model, so a part's own size says nothing about how big its label lands
+    // on screen. A small part would get text too small to read at the
+    // distance you are actually viewing from.
+    //
+    // The model is what the camera is fitted to, so a fraction of it is a
+    // fraction of the screen. Both boxes end up at one size, which is also the
+    // right answer — colour already says which is which.
+    const modelSpan = this.bounds ? Math.max(...this.bounds.size) : Math.max(sx, sy, sz)
+    const height = modelSpan * 0.05
     const gap = height * 0.7
     // One dimension per axis, written along the edge it measures and just
     // clear of it: width on the front bottom edge, depth on the right-hand
@@ -507,7 +534,6 @@ export class Viewport {
     const perMajor = mantissa(minor) === 5 ? 2 : 5
     const major = minor * perMajor
     this.step = minor
-    this.major = major
 
     // Extent follows the model, not the plate: a 2 mm part on a 220 mm bed
     // would otherwise need thousands of lines to stay at a readable spacing.
@@ -908,6 +934,7 @@ export class Viewport {
     // The box belongs to the selection, so it is drawn and cleared here
     // rather than by a second call the two could get out of step on.
     this.buildPartBox(shellIndex === null ? null : this.shellBounds(shellIndex))
+    this.dimModelBox(shellIndex !== null)
 
     if (this.shellHighlight) {
       this.modelGroup.remove(this.shellHighlight)
