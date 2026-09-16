@@ -25,11 +25,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # enablement turns Pages on and points it at this workflow using the
-      # job's own token, so the repository needs no manual settings change.
+      # No `enablement: true` here: turning Pages on is an admin-level call
+      # that GITHUB_TOKEN is not granted, so it fails the job. Pages has to be
+      # switched to the "GitHub Actions" source once, by hand, in Settings.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

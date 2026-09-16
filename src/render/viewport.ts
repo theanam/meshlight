@@ -31,7 +31,7 @@ const GRID_LABEL_PLATE = '#6f8299'
 
 /** The bounding box is a measuring aid, not part of the model, so it sits
  *  barely above the background — present when looked for, ignorable when not. */
-const BOX_LINE = 0x46536a
+const BOX_LINE = 0x3f4c61
 const BOX_LABEL = '#9aa7ba'
 
 /** Dihedral angle, in degrees, above which an edge counts as a real corner
@@ -90,7 +90,13 @@ export class Viewport {
     this.controls.dampingFactor = 0.08
 
     this.repairGroup.visible = false
-    this.scene.add(this.modelGroup, this.highlightGroup, this.groundGroup, this.repairGroup)
+    this.scene.add(
+      this.modelGroup,
+      this.highlightGroup,
+      this.groundGroup,
+      this.repairGroup,
+      this.boxGroup,
+    )
     this.addLighting()
 
     window.addEventListener('resize', this.resize)
@@ -209,7 +215,7 @@ export class Viewport {
         new THREE.LineBasicMaterial({
           color: BOX_LINE,
           transparent: true,
-          opacity: 0.55,
+          opacity: 0.5,
           depthTest: false,
         }),
       ),
@@ -218,12 +224,13 @@ export class Viewport {
     const [sx, sy, sz] = this.bounds.size
     const [cx, cy, cz] = this.bounds.center
     const height = (this.major || Math.max(sx, sy, sz) / 10) * 0.3
-    const gap = height * 0.5
+    const gap = height * 0.8
     // One dimension per axis, on the edge it measures: width along the front
-    // bottom edge, depth up the left one, height on the near vertical.
-    this.addLabel(this.boxGroup, fmtDim(sx), [cx, y0 - gap, z0], [0.5, 1], height, BOX_LABEL)
-    this.addLabel(this.boxGroup, fmtDim(sy), [x0 - gap, cy, z0], [1, 0.5], height, BOX_LABEL)
-    this.addLabel(this.boxGroup, fmtDim(sz), [x0 - gap, y0 - gap, cz], [1, 0.5], height, BOX_LABEL)
+    // bottom edge, depth down the left one, height up the near vertical. Each
+    // is named, because three bare numbers in space do not say which is which.
+    this.addLabel(this.boxGroup, `X ${fmtDim(sx)}`, [cx, y0 - gap, z0], [0.5, 1], height, BOX_LABEL)
+    this.addLabel(this.boxGroup, `Y ${fmtDim(sy)}`, [x1 + gap, cy, z0], [0, 0.5], height, BOX_LABEL)
+    this.addLabel(this.boxGroup, `Z ${fmtDim(sz)}`, [x0 - gap, y0 - gap, cz], [1, 0.5], height, BOX_LABEL)
   }
 
   private clearBox(): void {

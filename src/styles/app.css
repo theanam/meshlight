@@ -176,6 +176,36 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 .iconbtn:hover { color: var(--ink); border-color: var(--line-control); background: var(--raised); }
+
+/* These buttons carry no label, so they need one on hover. The native `title`
+   tooltip is too slow to appear and unstyleable; this matches the chrome it
+   sits in and shows up straight away. aria-label still carries the name for
+   anyone not using a pointer. */
+.iconbtn { position: relative; }
+.iconbtn::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  border: 1px solid var(--line-control);
+  color: var(--ink-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.3;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease;
+}
+.iconbtn:hover::after,
+.iconbtn:focus-visible::after { opacity: 1; }
+/* These buttons sit hard against the right edge of the stage, so a centred
+   tooltip spills over the panel beside it. Hang them all from the right. */
+.stage__top .iconbtn::after { left: auto; right: 0; transform: none; }
 .iconbtn[aria-pressed='true'] {
   color: var(--void);
   background: var(--ink);

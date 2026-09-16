@@ -596,11 +596,11 @@ function shellHtml(): string {
           <button data-view="wire" aria-pressed="false">Wire</button>
         </div>
         <button class="iconbtn" data-action="grid" aria-pressed="true"
-                aria-label="Grid" title="Grid — a ruler on the build plane">${toolIcons.grid}</button>
+                aria-label="Grid" data-tip="Grid — a ruler on the build plane">${toolIcons.grid}</button>
         <button class="iconbtn" data-action="box" aria-pressed="true"
-                aria-label="Bounding box" title="Bounding box — the part's measured extents">${toolIcons.box}</button>
+                aria-label="Bounding box" data-tip="Bounding box — measured extents">${toolIcons.box}</button>
         <button class="iconbtn" data-action="fit"
-                aria-label="Fit view" title="Fit the model in view">${toolIcons.fit}</button>
+                aria-label="Fit view" data-tip="Fit the model in view">${toolIcons.fit}</button>
       </div>
 
       <div class="scorecard" hidden>
