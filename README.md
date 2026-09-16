@@ -159,6 +159,95 @@ which needs a CSG kernel well beyond what is here. Faking it — welding shells
 that happen to touch, say — would hand you a file that claims to be one solid
 and is not, which is worse than not offering it.
 
+### Edit
+Basic mesh modification, run in the worker. Tools act on the part selected in
+the viewport, or on the whole model when nothing is selected.
+
+**Edits are a draft until you apply them.** The Edit tab has its own working
+mesh; Report, Fix, Cutaway and the score go on describing the mesh as it was,
+and the viewport draws whichever of the two the tab you are on is talking about.
+`Apply N changes to the loaded model` promotes the working mesh, re-runs the
+full analysis and hands it to everything else.
+
+The button says *loaded model* and repeats the caveat on its own second line,
+because this is the point someone is most likely to assume they have saved
+something: applying changes the copy held in the tab and nothing on disk. The
+file you opened is never written to. `Export` is what produces a file, and it
+always produces a new one.
+
+| Tool | What it does |
+| --- | --- |
+| Scale | Uniform resize about the selection's own centre, so it grows in place |
+| Rotate | Quarter turns or a free angle about X, Y or Z |
+| Cut | Drag a line across the viewport; the model is cut along it and both faces are capped |
+| Delete part | Removes the selected body — `Delete`/`Backspace` does the same |
+| Export part | Writes the selected body alone as `name-part-N.stl` |
+| Apply | Promotes the working mesh so every other tab describes it |
+
+**The cut is drawn, not dialled.** A line on screen does not name a plane by
+itself — it names every plane containing it. The one you mean is the plane
+through the eye and the two endpoints, which under a perspective camera is
+exactly the set of world points landing on that line, so the seam follows the
+stroke. Orbit first to choose the angle; `Keep` decides whether you get both
+halves as separate parts or only the near or far side.
+
+Cutting is a real split, not a clipping plane: straddling triangles are clipped
+with Sutherland–Hodgman, the edges the plane carves are chained into loops, and
+each loop is ear-clipped into a cap wound to face out of its own half. The two
+halves are welded separately and then placed in one buffer *without* welding
+across, so they stay two parts you can select, export or delete rather than one
+solid with an internal wall.
+
+A plane passing exactly through a vertex is the one case the algorithm cannot
+express — it finds the cut boundary by looking at where triangles straddle, and
+a plane running along a model's own edge straddles nothing there. Rather than
+special-case coplanar geometry, the plane slides a few microns until it meets
+only triangle interiors; on a 100 mm part that is under three microns, far below
+any printer's resolution. Cut an axis-aligned box corner to corner and you can
+see why it is needed: the plane lies along two of its edges.
+
+**Undo is a stack of whole meshes**, not inverse operations. Every edit is
+already a pure function returning a new mesh, so keeping the old one is both
+simpler and exact — a cut is not invertible any other way. History is capped at
+24 steps or roughly 192 MB of geometry, whichever runs out first, and `Ctrl`/`⌘`
+`+Z` works wherever a mesh is loaded.
+
+`Discard all N edits and put every tab back` restores the mesh kept from load
+rather than re-parsing, and resets the applied model with it, so the whole app
+returns to the file as opened. It goes on the undo stack on the way past — so
+discarding everything is recoverable from the same Undo that recovers a
+mis-drawn cut, which otherwise would be the one action in the panel you could
+not take back. Each history entry carries the edit count that was current when
+its mesh was, so undoing a discard restores the depth it had before rather than
+one less than whatever it happens to be now.
+
+**Edits stay inside the Edit tab until applied.** No other mode's chrome changes
+shape because a mesh has been edited — unapplied changes show as a badge on the
+Edit tab and nowhere else. The badge is mint rather than red: red on the Report
+and Fix badges means something is wrong with the mesh, and an edit is a state,
+not a defect. It counts unapplied changes, or shows a dot in the one case with
+nothing sensible to count — undoing back past an apply leaves a mesh that
+differs from the applied one while the count reads zero. The footer's `Re-run`
+still re-reads the file from scratch, which discards edits; its tooltip says so.
+
+**No score in Edit.** The printability score grades a mesh for printing, which
+is not the question you are asking while you are still changing its shape — and
+over an unapplied draft it would be grading geometry that is not even the one on
+screen. The defect legend goes with it, for the same reason: those highlights
+belong to the applied analysis, and over a draft they would be marking edges
+that may no longer exist. The file chip stays, reading the working mesh with the
+applied count beside it, so the difference an unapplied edit has made is legible
+without leaving the tab.
+
+A draft costs a shell trace, not a full analysis (`findShells` in
+[`analysis.ts`](src/core/analysis.ts)): the Edit tab redraws and re-selects parts
+on every step and has no use for an issue list, a score or highlights until the
+edits are applied. Skipping the rest is most of the cost.
+
+**Not included: boolean union, move, and mirror.** Merging shells still needs a
+CSG kernel (see Fix). Move and mirror were left out of the first pass rather
+than ruled out.
+
 ### Viewport
 Two reference overlays answer "how big is this, actually", which a fitted camera
 otherwise hides — a 4 mm bracket and a 300 mm vase fill the frame identically.
@@ -351,8 +440,13 @@ which reads as "this one" instead of "this is wrong".
 ## Not in this version
 
 Per spec §6, deliberately deferred: heatmap overlays, volume and filament
-estimates, batch loading, arbitrary-angle cross sections, report export,
-and merging separate shells.
+estimates, batch loading, arbitrary-angle cross *sections*, report export,
+and merging separate shells. Arbitrary-angle **cuts** did ship, in Edit — the
+section view still only reads horizontal slabs, because that is what the Z
+bucketing it scrubs through is built on.
+
+Auto-cutting a part to fit the build plate is not in yet. The cut and the
+plate-fit check both exist; nothing joins them up and picks the plane for you.
 
 Measurement is partial. The grid and the bounding box give you scale and overall
 dimensions; picking two points and measuring between them does not ship.
@@ -361,7 +455,10 @@ Settings persistence (§6.9) is the one Phase 2 item that did ship — the Setup
 panel writes to `localStorage` and the values are restored on startup — because
 a tunable score is useless if you have to retype your nozzle diameter each time.
 
-Meshlight is not a slicer and not a mesh editor.
+Meshlight is not a slicer. It is now a *basic* mesh editor — delete, scale,
+rotate, cut and per-part export (see Edit) — but not a modeller: there is no
+boolean union, no sculpting and no topology editing, and there is no plan for
+any of them.
 
 ---
 

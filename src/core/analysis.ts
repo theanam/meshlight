@@ -199,6 +199,16 @@ function faceInstances(mesh: IndexedMesh, triangles: Uint32Array): DefectInstanc
   return out
 }
 
+/** Just the connected components.
+ *
+ *  For callers that need to address parts but not to judge them: the Edit tab
+ *  redraws and re-selects shells on every step, and has no use for an issue
+ *  list, a score or defect highlights until those edits are applied. Skipping
+ *  the rest is most of the cost of an analysis. */
+export function findShells(mesh: IndexedMesh): Shell[] {
+  return findShellsAndWinding(mesh, buildAdjacency(mesh)).shells
+}
+
 export function analyseMesh(mesh: IndexedMesh, onProgress: ProgressFn = () => {}): Analysis {
   const started = performance.now()
 

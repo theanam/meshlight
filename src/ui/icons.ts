@@ -21,6 +21,14 @@ export const railIcons = {
     '</span>',
   fix: '<span style="width:20px;height:20px;border:2px solid currentColor;border-radius:4px;transform:rotate(45deg)"></span>',
   setup: '<span style="width:18px;height:18px;border:2px solid currentColor;border-radius:50%"></span>',
+  /** A solid with a cut running through it — the operation the tab is really
+   *  for, and the one that reads at 20px. */
+  edit: `
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+  <rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.6" stroke="currentColor" stroke-width="2"/>
+  <path d="M1.6 14.2 14.2 1.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-dasharray="3 2.8"/>
+</svg>`,
   /** A question mark in a ring: the one glyph nobody has to be taught. */
   help: `
 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">

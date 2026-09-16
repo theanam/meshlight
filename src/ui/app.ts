@@ -6,7 +6,15 @@ import { NavCube } from '../render/navcube'
 import { Viewport } from '../render/viewport'
 import type { Mode } from '../store'
 import { NO_REPAIRS, saveSettings, store } from '../store'
-import type { WorkerRequest, WorkerResponse } from '../worker/protocol'
+import type {
+  DraftPayload,
+  EditOp,
+  LoadedPayload,
+  WorkerRequest,
+  WorkerResponse,
+} from '../worker/protocol'
+import type { Axis, CutKeep } from '../core/edit'
+import { renderEdit } from './edit-panel'
 import { REPO_URL, githubIcon, helpHtml, mountHelp } from './help'
 import { markSvg, railIcons, toolIcons } from './icons'
 import { PLATE_PRESETS, findPlate, plateLabel } from './plates'
@@ -28,6 +36,7 @@ const MODES: { id: Mode; label: string; icon: string }[] = [
   // separate Score mode to switch to.
   { id: 'report', label: 'REPORT', icon: railIcons.report },
   { id: 'fix', label: 'FIX', icon: railIcons.fix },
+  { id: 'edit', label: 'EDIT', icon: railIcons.edit },
   { id: 'cutaway', label: 'CUTAWAY', icon: railIcons.cutaway },
 ]
 
@@ -36,6 +45,10 @@ const PANEL_COPY: Record<Mode, { title: string; lede: string }> = {
   fix: {
     title: 'Fix',
     lede: 'Repairs Meshlight can make safely. Tick what you want, see it before you commit.',
+  },
+  edit: {
+    title: 'Edit',
+    lede: 'Take parts out, resize them, turn them, cut the model along a line you draw.',
   },
   cutaway: {
     title: 'Cutaway',
@@ -80,6 +93,9 @@ export function mountApp(root: HTMLElement): void {
   const cubeCanvas = root.querySelector<HTMLCanvasElement>('.viewbar__cube')!
   const plateMenu = root.querySelector<HTMLElement>('[data-menu="plate"]')!
   const compare = root.querySelector<HTMLElement>('.segmented--compare')!
+  const cutline = root.querySelector<SVGSVGElement>('.cutline')!
+  const cutStroke = root.querySelector<SVGLineElement>('.cutline__stroke')!
+  const stage = root.querySelector<HTMLElement>('.stage')!
 
   const viewport = new Viewport(canvas)
   // Clicking a face looks from that face; the cube follows the camera through
@@ -119,6 +135,50 @@ export function mountApp(root: HTMLElement): void {
   async function loadFile(file: File): Promise<void> {
     loadBuffer(await file.arrayBuffer(), file.name)
   }
+
+  // ---- edits ----------------------------------------------------------
+
+  /** Whichever payload's geometry is currently uploaded, so the swap between
+   *  the draft and the applied model happens once per change rather than on
+   *  every store notification — rebuilding the buffers, the feature edges and
+   *  the wireframe sixty times a second would be visible. */
+  let shownGeometry: unknown = null
+
+  /** The Edit tab draws its working mesh; every other tab draws the applied
+   *  model. That split is the whole point of applying: a report has to be
+   *  describing the geometry it is drawn next to. */
+  function showGeometry(state: { mode: Mode; model: LoadedPayload | null; draft: DraftPayload | null }): void {
+    const wanted = state.mode === 'edit' && state.draft ? state.draft : state.model
+    if (wanted === shownGeometry) return
+    shownGeometry = wanted
+    if (!wanted) return
+
+    // Keep the camera: after a cut you want to see the seam you just drew,
+    // from where you drew it, and switching tabs should not move the view.
+    viewport.setModel(wanted.positions, wanted.indices, wanted.bounds, wanted.shellIds, true)
+    // Defect highlights belong to the applied analysis. Over a draft they
+    // would be marking edges that may no longer exist.
+    viewport.showOnly(wanted === state.model ? null : [])
+  }
+
+
+
+  /** Whether the part currently selected still means the same thing once the
+   *  edit in flight comes back.
+   *
+   *  Shell numbers are positions in the analysis, so anything that adds or
+   *  removes a shell renumbers the rest. Scaling and turning leave the
+   *  triangle order alone, so the selection survives those and only those. */
+  let selectionSurvivesEdit = false
+
+  function sendEdit(op: EditOp): void {
+    selectionSurvivesEdit = op.kind === 'scale' || op.kind === 'rotate'
+    store.set({ editBusy: true, editOutcome: null, editRefusal: null })
+    send({ type: 'edit', op })
+  }
+
+  /** Which part the tools act on: the selected one, or the whole model. */
+  const editTarget = (): number | null => store.get().selectedShell
 
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0]
@@ -162,6 +222,7 @@ export function mountApp(root: HTMLElement): void {
 
       case 'loaded': {
         const payload = message.payload
+        shownGeometry = null
         viewport.setBuildVolume(
           store.get().settings.buildVolume,
           plateLabel(store.get().settings.platePreset),
@@ -204,13 +265,72 @@ export function mountApp(root: HTMLElement): void {
         break
       }
 
+      case 'drafted': {
+        const draft = message.draft
+        const keptShell =
+          selectionSurvivesEdit && (store.get().selectedShell ?? 0) < draft.shellCount
+            ? store.get().selectedShell
+            : null
+
+        store.set({
+          draft,
+          busy: false,
+          editBusy: false,
+          error: null,
+          history: message.history,
+          editOutcome: message.outcome,
+          editRefusal: null,
+          selectedShell: keptShell,
+        })
+        break
+      }
+
+      case 'applied': {
+        const payload = message.payload
+        viewport.setHighlights(payload.highlights)
+        viewport.clearRepair()
+
+        store.set({
+          model: payload,
+          draft: null,
+          score: payload.score,
+          readiness: payload.readiness,
+          busy: false,
+          editBusy: false,
+          error: null,
+          history: message.history,
+          editOutcome: message.outcome,
+          editRefusal: null,
+          selectedShell: null,
+          selectedIssue: null,
+          expandedIssue: null,
+          selectedInstance: null,
+          cutZ: null,
+          // The mesh moved on, so anything the Fix panel was previewing
+          // described a shape that no longer exists.
+          repairOptions: { ...NO_REPAIRS },
+          repairPreview: null,
+          repairBusy: false,
+        })
+
+        cutRange.min = String(payload.bounds.min[2])
+        cutRange.max = String(payload.bounds.max[2])
+        cutRange.step = String(Math.max(payload.bounds.size[2] / 400, 1e-4))
+        cutRange.value = String(payload.bounds.center[2])
+        break
+      }
+
+      case 'editRefused':
+        store.set({ editBusy: false, editRefusal: message.message, editOutcome: null })
+        break
+
       case 'exported': {
         // Straight to the user's downloads — no server is ever involved.
         const base = baseName(store.get().fileName ?? 'model')
         const url = URL.createObjectURL(new Blob([message.stl], { type: 'model/stl' }))
         const link = document.createElement('a')
         link.href = url
-        link.download = `${base}-fixed.stl`
+        link.download = `${base}-${message.suffix}.stl`
         link.click()
         URL.revokeObjectURL(url)
         break
@@ -248,6 +368,18 @@ export function mountApp(root: HTMLElement): void {
         return
       }
 
+      // Selecting a part is the premise of the Edit tab, so arriving there
+      // switches picking on rather than making it a second thing to discover.
+      if (mode === 'edit' && state.model) {
+        store.set({ mode, pickParts: true, editOutcome: null, editRefusal: null })
+        return
+      }
+
+      // Leaving Edit puts the pointer back to orbiting, whatever was armed.
+      if (state.mode === 'edit' && mode !== 'edit') {
+        store.set({ cutArmed: false, editOutcome: null, editRefusal: null })
+      }
+
       if (mode === 'cutaway' && state.model) {
         const z = state.cutZ ?? state.model.bounds.center[2]
         cutRange.value = String(z)
@@ -273,6 +405,39 @@ export function mountApp(root: HTMLElement): void {
     // Setup is a form, so "?" has to stay a character anywhere it could be one.
     const target = event.target as HTMLElement | null
     if (target?.closest('input, textarea, select')) return
+
+    // Undo is a reflex, so it is bound wherever a mesh is loaded rather than
+    // only while the Edit panel happens to be open.
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+      if (!store.get().model) return
+      event.preventDefault()
+      const direction = event.shiftKey ? 'redo' : 'undo'
+      const { history } = store.get()
+      if (direction === 'undo' ? !history.canUndo : !history.canRedo) return
+      selectionSurvivesEdit = false
+      store.set({ editBusy: true })
+      send({ type: 'history', direction })
+      return
+    }
+
+    // Delete removes the selected part, but only in Edit — a destructive key
+    // needs the visible button beside it, and a part can be selected from any
+    // mode. Backspace too: on a Mac that key is labelled Delete.
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      const state = store.get()
+      if (state.mode !== 'edit' || state.selectedShell === null || state.editBusy) return
+      event.preventDefault()
+      sendEdit({ kind: 'delete', shell: state.selectedShell })
+      return
+    }
+
+    if (event.key === 'Escape' && store.get().cutArmed) {
+      cutFrom = null
+      cutline.setAttribute('hidden', '')
+      store.set({ cutArmed: false })
+      return
+    }
+
     if (event.key === '?') {
       event.preventDefault()
       help.toggle()
@@ -343,13 +508,65 @@ export function mountApp(root: HTMLElement): void {
   })
 
   canvas.addEventListener('pointerup', (event) => {
-    if (!store.get().pickParts || event.button !== 0) return
+    if (!store.get().pickParts || store.get().cutArmed || event.button !== 0) return
     if (event.timeStamp - pressedAt > CLICK_MS) return
     if (Math.hypot(event.clientX - pressX, event.clientY - pressY) > CLICK_SLOP_PX) return
 
     // Empty space clears the selection, which is the only obvious way back out
     // of an isolated part.
     store.set({ selectedShell: viewport.pickShell(event.clientX, event.clientY) })
+  })
+
+  // ---- drawing a cut line ---------------------------------------------
+
+  /** Screen point of the drag in progress, or null when nothing is being
+   *  drawn. Held here rather than in the store: it changes on every pointer
+   *  move, and re-rendering the panel sixty times a second to show a line
+   *  that is drawn in SVG anyway would be absurd. */
+  let cutFrom: [number, number] | null = null
+
+  function drawCutLine(from: [number, number], to: [number, number]): void {
+    const rect = stage.getBoundingClientRect()
+    cutStroke.setAttribute('x1', String(from[0] - rect.left))
+    cutStroke.setAttribute('y1', String(from[1] - rect.top))
+    cutStroke.setAttribute('x2', String(to[0] - rect.left))
+    cutStroke.setAttribute('y2', String(to[1] - rect.top))
+    cutline.removeAttribute('hidden')
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (!store.get().cutArmed || event.button !== 0) return
+    cutFrom = [event.clientX, event.clientY]
+    canvas.setPointerCapture(event.pointerId)
+    drawCutLine(cutFrom, cutFrom)
+  })
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (cutFrom) drawCutLine(cutFrom, [event.clientX, event.clientY])
+  })
+
+  canvas.addEventListener('pointerup', (event) => {
+    if (!cutFrom) return
+    const from = cutFrom
+    cutFrom = null
+    cutline.setAttribute('hidden', '')
+
+    const plane = viewport.planeFromScreenLine(from, [event.clientX, event.clientY])
+    store.set({ cutArmed: false })
+
+    if (!plane) {
+      store.set({
+        editRefusal: 'That stroke was too short to aim a cut. Drag a line right across the part.',
+      })
+      return
+    }
+    sendEdit({ kind: 'cut', shell: editTarget(), plane, keep: store.get().cutKeep })
+  })
+
+  // A drag that leaves the window would otherwise leave the line hanging.
+  canvas.addEventListener('pointercancel', () => {
+    cutFrom = null
+    cutline.setAttribute('hidden', '')
   })
 
   // ---- build plate menu -----------------------------------------------
@@ -459,6 +676,106 @@ export function mountApp(root: HTMLElement): void {
     if (issue?.focus) viewport.focusOn(issue.focus)
   })
 
+  // ---- edit tools -------------------------------------------------------
+
+  /** Read a number out of the panel, falling back when it has been cleared or
+   *  typed into nonsense. */
+  function numberField(selector: string, fallback: number): number {
+    const input = panelBody.querySelector<HTMLInputElement>(selector)
+    const value = Number(input?.value)
+    return Number.isFinite(value) && value !== 0 ? value : fallback
+  }
+
+  panelBody.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement
+
+    const keep = target.closest<HTMLButtonElement>('[data-keep]')
+    if (keep) {
+      store.set({ cutKeep: keep.dataset.keep as CutKeep })
+      return
+    }
+
+    const tool = target.closest<HTMLButtonElement>('[data-edit]')
+    if (!tool || tool.disabled) return
+
+    switch (tool.dataset.edit) {
+      case 'deselect':
+        store.set({ selectedShell: null })
+        return
+
+      case 'scale': {
+        const percent = tool.dataset.percent
+          ? Number(tool.dataset.percent)
+          : numberField('#scale-percent', 100)
+        if (percent === 100) {
+          store.set({ editRefusal: 'That is the size it already is.', editOutcome: null })
+          return
+        }
+        const ratio = percent / 100
+        sendEdit({ kind: 'scale', shell: editTarget(), factor: [ratio, ratio, ratio] })
+        return
+      }
+
+      case 'rotate':
+        sendEdit({
+          kind: 'rotate',
+          shell: editTarget(),
+          axis: Number(tool.dataset.axis) as Axis,
+          degrees: Number(tool.dataset.degrees),
+        })
+        return
+
+      case 'rotate-free': {
+        const axis = Number(tool.dataset.axis) as Axis
+        sendEdit({
+          kind: 'rotate',
+          shell: editTarget(),
+          axis,
+          degrees: numberField(`[data-angle="${axis}"]`, 45),
+        })
+        return
+      }
+
+      case 'cut':
+        // Arming is a toggle: the same button cancels, and so does Escape.
+        store.set({ cutArmed: !store.get().cutArmed, editOutcome: null, editRefusal: null })
+        return
+
+      case 'delete': {
+        const shell = editTarget()
+        if (shell !== null) sendEdit({ kind: 'delete', shell })
+        return
+      }
+
+      case 'export-part':
+        send({ type: 'exportMesh', shell: editTarget() })
+        return
+
+      case 'export-model':
+        send({ type: 'exportMesh', shell: null })
+        return
+
+      case 'apply':
+        selectionSurvivesEdit = false
+        store.set({ editBusy: true, editOutcome: null, editRefusal: null })
+        send({ type: 'apply' })
+        return
+
+      case 'reset':
+        selectionSurvivesEdit = false
+        store.set({ editBusy: true, editOutcome: null, editRefusal: null })
+        send({ type: 'reset' })
+        return
+
+      case 'undo':
+      case 'redo':
+        selectionSurvivesEdit = false
+        store.set({ editBusy: true })
+        send({ type: 'history', direction: tool.dataset.edit === 'undo' ? 'undo' : 'redo' })
+        return
+    }
+  })
+
   panelBody.addEventListener('click', (event) => {
     const target = event.target as HTMLElement
 
@@ -528,13 +845,14 @@ export function mountApp(root: HTMLElement): void {
 
     root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((button) => {
       button.setAttribute('aria-current', String(button.dataset.mode === state.mode))
-      // Only Cutaway is meaningless without a mesh. Report shows the drop
-      // prompt and Setup is worth configuring before loading anything.
-      button.disabled = !hasModel && button.dataset.mode === 'cutaway'
+      // Cutaway and Edit are meaningless without a mesh. Report shows the
+      // drop prompt and Setup is worth configuring before loading anything.
+      button.disabled =
+        !hasModel && (button.dataset.mode === 'cutaway' || button.dataset.mode === 'edit')
     })
 
     const errorCount = state.model?.issues.filter((i) => i.severity === 'error').length ?? 0
-    const badge = root.querySelector<HTMLElement>('.rail__badge:not(.rail__badge--fix)')!
+    const badge = root.querySelector<HTMLElement>('.rail__badge--report')!
     badge.hidden = errorCount === 0
     badge.textContent = String(errorCount)
 
@@ -546,6 +864,16 @@ export function mountApp(root: HTMLElement): void {
     fixBadge.hidden = repairable === 0
     fixBadge.textContent = String(repairable)
 
+    // Edits live in the Edit tab and nowhere else. The one thing the rest of
+    // the app needs to know is that they exist, and a count on the tab says
+    // that without putting edit state into chrome every mode shares.
+    const editBadge = root.querySelector<HTMLElement>('.rail__badge--edit')!
+    editBadge.hidden = !state.history.unapplied
+    // Undoing back past an apply leaves a mesh that differs from the applied
+    // one with nothing sensible to count, so it gets a mark rather than a
+    // number. Applying always clears the badge either way.
+    editBadge.textContent = state.history.pending > 0 ? String(state.history.pending) : '•'
+
     viewport.setShaded(state.shaded)
     viewport.setGridVisible(state.showGrid)
     segmented.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) =>
@@ -556,14 +884,20 @@ export function mountApp(root: HTMLElement): void {
     boxButton.setAttribute('aria-pressed', String(state.showBox))
     viewport.setPlateVisible(state.showPlate)
     plateButton.setAttribute('aria-pressed', String(state.showPlate))
+    showGeometry(state)
     viewport.highlightShell(state.selectedShell)
     partsButton.setAttribute('aria-pressed', String(state.pickParts))
-    shell.classList.toggle('is-picking', state.pickParts && hasModel)
+    shell.classList.toggle('is-picking', state.pickParts && hasModel && !state.cutArmed)
+
+    // While a cut is armed the drag belongs to the tool, not to the orbit.
+    viewport.setInteractive(!state.cutArmed)
+    shell.classList.toggle('is-cutting', state.cutArmed)
+    if (!state.cutArmed) cutline.setAttribute('hidden', '')
 
     // Chrome that only means something once a mesh is on screen.
     chip.hidden = !hasModel
     viewbar.hidden = !hasModel
-    legend.hidden = !hasModel || state.mode === 'cutaway'
+    legend.hidden = !hasModel || state.mode === 'cutaway' || state.mode === 'edit'
     cutbar.hidden = !hasModel || state.mode !== 'cutaway'
     shell.classList.toggle('is-cutaway', hasModel && state.mode === 'cutaway')
 
@@ -590,9 +924,21 @@ export function mountApp(root: HTMLElement): void {
       // the small squares between them is worth, which they do not.
       const grid = state.showGrid && viewport.gridStep > 0 ? ` · cell ${fmtStep(viewport.gridStep)} mm` : ''
       const previewMesh = state.mode === 'fix' ? state.repairPreview : null
+      // In Edit the chip follows the working mesh, because that is what is on
+      // screen — and it shows the applied count beside it so the difference
+      // an unapplied edit has made is readable without leaving the tab.
+      const draft = state.mode === 'edit' ? state.draft : null
       chip.querySelector('.chip__meta')!.textContent = previewMesh
         ? `${m.triangleCount.toLocaleString()} → ${previewMesh.triangleCount.toLocaleString()} tri`
-        :
+        : draft
+          ? // Scaling and turning leave the triangle count alone, and
+            // "163 → 163" is noise. Show the arrow only where it says something.
+            `${
+              draft.triangleCount === m.triangleCount
+                ? draft.triangleCount.toLocaleString()
+                : `${m.triangleCount.toLocaleString()} → ${draft.triangleCount.toLocaleString()}`
+            } tri · ${draft.bounds.size.map((n) => n.toFixed(1)).join(' × ')} mm · not applied`
+          :
         `${m.format} · ${m.triangleCount.toLocaleString()} tri · ${m.bounds.size.map((n) => n.toFixed(1)).join(' × ')} mm${grid}`
     }
 
@@ -641,8 +987,12 @@ export function mountApp(root: HTMLElement): void {
 
     // The floating scorecard is a stand-in for the panel: show it only when
     // the report rail is not already displaying the score, so the number is
-    // always on screen exactly once.
-    scorecard.hidden = !hasModel || (isReport && state.score !== null)
+    // always on screen exactly once. Edit never shows it — the score grades a
+    // mesh for printing, which is not the question you are asking while you
+    // are still changing its shape, and over an unapplied draft it would be
+    // grading geometry that is not even on screen.
+    scorecard.hidden =
+      !hasModel || state.mode === 'edit' || (isReport && state.score !== null)
 
     if (isReport && hasModel && state.score) {
       panelFixed.innerHTML = renderScoreHeader(state.score) + renderBreakdown(state.score)
@@ -667,6 +1017,31 @@ export function mountApp(root: HTMLElement): void {
         state.repairOptions,
         state.repairPreview,
       )
+    } else if (state.mode === 'edit') {
+      // Typed values are transient — they live in the inputs and nowhere else —
+      // so a re-render prompted by something unrelated must not wipe the
+      // number half-entered in the scale box.
+      const typed = new Map<string, string>()
+      panelBody.querySelectorAll<HTMLInputElement>('input[id], input[data-angle]').forEach((input) =>
+        typed.set(input.id || `angle-${input.dataset.angle}`, input.value),
+      )
+
+      panelBody.innerHTML = renderEdit({
+        model: state.model!,
+        draft: state.draft,
+        selectedShell: state.selectedShell,
+        cutArmed: state.cutArmed,
+        cutKeep: state.cutKeep,
+        history: state.history,
+        outcome: state.editOutcome,
+        refusal: state.editRefusal,
+        busy: state.editBusy,
+      })
+
+      panelBody.querySelectorAll<HTMLInputElement>('input[id], input[data-angle]').forEach((input) => {
+        const previous = typed.get(input.id || `angle-${input.dataset.angle}`)
+        if (previous !== undefined) input.value = previous
+      })
     } else if (state.mode === 'cutaway') {
       panelBody.innerHTML = `
         <p class="empty">
@@ -682,6 +1057,13 @@ export function mountApp(root: HTMLElement): void {
       ? `analysis ${(state.model.elapsedMs / 1000).toFixed(1)} s · worker`
       : 'no model loaded'
     rerun.disabled = !hasModel
+    // The footer belongs to every mode, so it does not change shape when the
+    // mesh has been edited — the badge on the Edit tab carries that. It does
+    // owe anyone hovering the truth about what it will do to their edits.
+    rerun.title =
+      state.history.depth > 0
+        ? 'Read the file again from scratch — this discards every edit'
+        : 'Analyse the same file again'
 
     if (state.mode === 'cutaway' && state.model) {
       const z = state.cutZ ?? state.model.bounds.center[2]
@@ -727,8 +1109,9 @@ function shellHtml(): string {
         <button class="rail__item" data-mode="${mode.id}" aria-current="false">
           ${mode.icon}
           <span class="rail__label">${mode.label}</span>
-          ${mode.id === 'report' ? '<span class="rail__badge" hidden>0</span>' : ''}
+          ${mode.id === 'report' ? '<span class="rail__badge rail__badge--report" hidden>0</span>' : ''}
           ${mode.id === 'fix' ? '<span class="rail__badge rail__badge--fix" hidden>0</span>' : ''}
+          ${mode.id === 'edit' ? '<span class="rail__badge rail__badge--edit" hidden>0</span>' : ''}
         </button>`,
       ).join('')}
       <span class="rail__spacer"></span>
@@ -830,6 +1213,13 @@ function shellHtml(): string {
         <input type="range" id="cut-range" min="0" max="1" step="0.001" value="0.5" aria-label="Cut height">
         <span class="cutbar__readout mono">—</span>
       </div>
+
+      <!-- The cut line is drawn over the canvas rather than in it: it is a
+           stroke on the screen, not a thing in the scene, and it disappears
+           the moment the plane it describes has been worked out. -->
+      <svg class="cutline" hidden aria-hidden="true">
+        <line class="cutline__stroke" x1="0" y1="0" x2="0" y2="0"/>
+      </svg>
 
       <div class="drop">
         ${markSvg(56, 5)}

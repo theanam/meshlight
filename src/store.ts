@@ -2,9 +2,16 @@ import type { RepairOptions } from './core/repair'
 import type { Readiness } from './core/readiness'
 import type { Score, Settings } from './core/types'
 import { DEFAULT_SETTINGS } from './core/types'
-import type { LoadedPayload, RepairPreview } from './worker/protocol'
+import type { CutKeep } from './core/edit'
+import type {
+  DraftPayload,
+  EditOutcome,
+  HistoryState,
+  LoadedPayload,
+  RepairPreview,
+} from './worker/protocol'
 
-export type Mode = 'report' | 'fix' | 'cutaway' | 'setup'
+export type Mode = 'report' | 'fix' | 'edit' | 'cutaway' | 'setup'
 export type IssueFilter = 'all' | 'errors' | 'notes'
 
 export interface State {
@@ -45,6 +52,22 @@ export interface State {
   /** Whether the viewport is showing the repair or the loaded mesh. */
   showRepair: boolean
   repairBusy: boolean
+
+  /** True while the cut tool is waiting for a line to be drawn across the
+   *  viewport. Orbiting is suspended for the duration: the same drag cannot
+   *  both turn the model and draw on it. */
+  cutArmed: boolean
+  /** Which side of a drawn line survives the cut. */
+  cutKeep: CutKeep
+  /** The Edit tab's working mesh, when it differs from the applied model.
+   *  Only the Edit tab draws it; every other tab describes `model`. */
+  draft: DraftPayload | null
+  history: HistoryState
+  /** What the last edit did, or why it was declined. Cleared when the mode
+   *  changes, so it reads as a response to an action rather than a status. */
+  editOutcome: EditOutcome | null
+  editRefusal: string | null
+  editBusy: boolean
 }
 
 /** Everything a mesh can actually have wrong with it that Meshlight can put
@@ -91,6 +114,13 @@ function initialState(): State {
     repairPreview: null,
     showRepair: true,
     repairBusy: false,
+    cutArmed: false,
+    cutKeep: 'both',
+    draft: null,
+    history: { canUndo: false, canRedo: false, depth: 0, pending: 0, unapplied: false },
+    editOutcome: null,
+    editRefusal: null,
+    editBusy: false,
   }
 }
 

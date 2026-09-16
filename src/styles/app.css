@@ -102,6 +102,10 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   justify-content: center;
 }
 
+/* Unsaved edits are a state, not a defect. Red on the other two badges means
+   "something is wrong with this mesh"; mint here means "you changed it". */
+.rail__badge--edit { background: var(--accent); }
+
 /* ---- viewport ------------------------------------------------------- */
 
 .stage {
@@ -1087,6 +1091,267 @@ a.btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: no
 }
 .help__mail a { color: var(--ink-muted); text-decoration: underline; text-underline-offset: 3px; }
 .help__mail a:hover { color: var(--accent); }
+
+
+/* ============================ edit tab ==============================
+   A column of small tool groups. Each one is a heading, its controls and at
+   most one line saying what it will do — the panel is narrow, and a tool you
+   have to read a paragraph to use is the wrong tool. */
+
+.edit { display: flex; flex-direction: column; gap: 22px; padding: 22px 28px 26px; }
+
+/* ---- what the tools are pointed at ----------------------------------- */
+
+.target {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-control);
+  border-radius: var(--r-md);
+}
+/* A selected part borrows the isolation colour it is drawn in, so the panel
+   and the viewport are obviously talking about the same thing. */
+.target.is-part { border-left-color: var(--shell-select); }
+
+.target__label { font-size: 10px; letter-spacing: var(--tracking-label); color: var(--ink-faint); }
+.target__name { font-size: var(--text-lg); font-weight: 600; }
+.target.is-part .target__name { color: var(--shell-select); }
+.target__of { color: var(--ink-muted); font-weight: 400; }
+.target__meta { font-size: var(--text-xs); color: var(--ink-muted); }
+.target__hint { font-size: var(--text-xs); color: var(--ink-faint); line-height: 1.5; text-wrap: pretty; }
+
+.target__clear {
+  align-self: flex-start;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-control);
+}
+.target__clear:hover { color: var(--ink); }
+
+/* ---- what just happened ---------------------------------------------- */
+
+.outcome {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 14px;
+  border-radius: var(--r-md);
+  background: #0E1A16;
+  border: 1px solid #1C3A2E;
+}
+.outcome__label { font-size: var(--text-base); font-weight: 600; color: var(--accent); }
+.outcome__detail { font-size: var(--text-xs); color: var(--ink-muted); line-height: 1.5; }
+
+/* A refusal is not a failure — nothing broke, the tool just had nothing to
+   bite on. Amber, not red: red in this app means a defect in the mesh. */
+.outcome.is-refused {
+  background: #1A1410;
+  border-color: #3A2E1C;
+  color: var(--defect-flipped);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* ---- tool groups ------------------------------------------------------ */
+
+.tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line-subtle);
+}
+.tool-group--last { padding-bottom: 0; border-bottom: none; }
+
+.tool-group__title {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  color: var(--ink-faint);
+  margin: 0;
+}
+.tool-group__note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--ink-faint);
+  text-wrap: pretty;
+}
+.tool-group__row { display: flex; gap: 10px; }
+.tool-group__row .btn { flex: 1; }
+
+/* ---- fields ----------------------------------------------------------- */
+
+.numfield { display: flex; align-items: center; gap: 9px; }
+/* The look — background, border, mono, padding — already comes from the
+   input[type='number'] rule above. These only say how the box behaves in the
+   row, and they have to out-specify that rule to do it, hence `input`. */
+input.numfield__input { flex: 1; min-width: 0; }
+input.numfield__input:focus-visible { border-color: var(--accent); }
+input.numfield__input--slim {
+  flex: none;
+  width: 58px;
+  padding: 6px 8px;
+  font-size: var(--text-xs);
+  text-align: right;
+}
+.numfield__unit { font-size: var(--text-sm); color: var(--ink-muted); margin-left: -4px; }
+
+.chips { display: flex; gap: 7px; flex-wrap: wrap; }
+.chipbtn {
+  padding: 5px 11px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-pill);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.chipbtn:hover { color: var(--ink); border-color: var(--ink-muted); }
+
+/* ---- rotate ----------------------------------------------------------- */
+
+.axis-rows { display: flex; flex-direction: column; gap: 8px; }
+.axis-row { display: flex; align-items: center; gap: 7px; }
+.axis-row__name {
+  width: 14px;
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+}
+.btn--slim { padding: 6px 9px; font-size: var(--text-xs); border-radius: var(--r-sm); }
+.axis-row .btn--slim { flex: none; }
+
+/* ---- cut -------------------------------------------------------------- */
+
+/* Armed is a state you must be able to see from the viewport, where your eyes
+   actually are — so the button stops looking like an invitation and starts
+   looking like something running. */
+.btn--armed {
+  background: var(--defect-flipped);
+  border-color: var(--defect-flipped);
+  color: var(--void);
+  font-weight: 600;
+}
+.btn--armed:hover { background: #FFB36B; border-color: #FFB36B; color: var(--void); }
+
+.keep { display: flex; align-items: center; gap: 10px; }
+.keep__label { font-size: 10px; letter-spacing: var(--tracking-label); color: var(--ink-faint); }
+.segmented--keep { flex: 1; }
+.segmented--keep button { flex: 1; }
+
+/* ---- destructive ------------------------------------------------------ */
+
+.btn--danger { color: var(--defect-nonmanifold); border-color: var(--line-error); }
+.btn--danger:hover:not(:disabled) {
+  color: var(--void);
+  background: var(--defect-nonmanifold);
+  border-color: var(--defect-nonmanifold);
+}
+.btn--wide { width: 100%; }
+
+/* The commit button carries its own caveat. Applying changes the model in
+   this tab and nothing else, and that has to be legible on the control that
+   does it — not a line of help text somewhere under it that a confident user
+   will never read. */
+.btn--commit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 11px 14px;
+  text-align: center;
+}
+.btn__label { font-size: var(--text-md); font-weight: 600; line-height: 1.3; }
+.btn__sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  opacity: 0.75;
+  text-wrap: balance;
+}
+
+/* A shortcut printed on the button that uses it — the only place it means
+   anything, and the only place anyone will look for it. */
+.kbd {
+  margin-left: 7px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+/* Discarding everything is recoverable — Undo brings it back — so it is a
+   quiet last line rather than a second red button competing with Delete. */
+.discard {
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-control);
+}
+.discard:hover:not(:disabled) { color: var(--defect-nonmanifold); }
+.discard:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- the commit bar --------------------------------------------------- */
+
+/* Sticky rather than pinned outside the scroller: it takes its own space at
+   the end of the list, so the last tool group can still be scrolled clear of
+   it, and it rides the bottom of the panel on the way there. */
+.commit {
+  position: sticky;
+  bottom: 0;
+  /* Span the panel's side padding so the backdrop reaches both edges. */
+  margin: 6px -28px -26px;
+  padding: 14px 28px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--scrim-strong);
+  border-top: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+}
+.commit__note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--ink-faint);
+  text-align: center;
+  text-wrap: pretty;
+}
+
+/* ---- the cut line itself ---------------------------------------------- */
+
+.cutline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 4;
+}
+.cutline__stroke {
+  stroke: var(--defect-flipped);
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+
+/* Armed for a cut, the canvas is a surface to draw on rather than a model to
+   turn, and the cursor is the only place that can say so. */
+.is-cutting .stage__canvas { cursor: crosshair; }
 
 /* ---- narrow screens -------------------------------------------------
    Spec §8/§12: must not break on small screens, not optimised for them. */

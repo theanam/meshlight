@@ -9,6 +9,15 @@ import { orientedFootprint, plateFit } from '../src/core/footprint'
 import { buildZBuckets, sectionAt } from '../src/core/section'
 // Aliased: this file has its own toBinaryStl fixture helper.
 import { repairMesh, toBinaryStl as exportStl } from '../src/core/repair'
+import {
+  concatMeshes,
+  cutMesh,
+  cutPart,
+  deleteShell,
+  extractShell,
+  rotatePart,
+  scalePart,
+} from '../src/core/edit'
 import { MeshParseError } from '../src/core/formats/errors'
 import { parseStl } from '../src/core/formats/stl'
 import { parseMesh } from '../src/core/mesh-loader'
@@ -16,6 +25,12 @@ import { DEFAULT_SETTINGS, MAX_INSTANCES } from '../src/core/types'
 
 let failures = 0
 let checks = 0
+
+/** Floating point comparisons need a tolerance; two decimals is plenty for
+ *  millimetres and keeps the expected values in these tests readable. */
+function round(n: number): number {
+  return Math.round(n * 100) / 100
+}
 
 function check(label: string, actual: unknown, expected: unknown): void {
   checks++
@@ -786,6 +801,142 @@ console.log('\nmalformed input')
   check('too big at every angle', tooBig.fits, false)
   check('overflow is measured at the best angle', round(tooBig.overflow), 90)
 }
+
+
+console.log('\nediting: delete, scale, rotate')
+{
+  /** Two separate cubes, the second offset well clear of the first. */
+  const twoCubes = (): number[][] => {
+    const a = cubeTriangles(10)
+    const b = cubeTriangles(10).map((face) =>
+      face.map((value, i) => (i % 3 === 0 ? value + 40 : value)),
+    )
+    return [...a, ...b]
+  }
+
+  const shellIdsOf = (mesh: { triangleCount: number }, shells: { triangles: Uint32Array }[]) => {
+    const ids = new Uint32Array(mesh.triangleCount)
+    shells.forEach((shell, index) => {
+      for (const t of shell.triangles) ids[t] = index
+    })
+    return ids
+  }
+
+  const { mesh, analysis } = pipeline(twoCubes())
+  check('two shells to work with', analysis.shells.length, 2)
+  const ids = shellIdsOf(mesh, analysis.shells)
+
+  // ---- delete ----
+  const afterDelete = deleteShell(mesh, ids, 0)
+  check('delete leaves one cube', afterDelete.triangleCount, 12)
+  check('and drops its vertices too', afterDelete.vertexCount, 8)
+  check('the survivor is still watertight', analyseMesh(afterDelete).watertight, true)
+  check('the survivor is the one we kept', round(afterDelete.bounds.min[0]), 40)
+
+  // ---- extract ----
+  const only = extractShell(mesh, ids, 1)
+  check('extract takes just that part', only.triangleCount, 12)
+  check('positioned where it was', round(only.bounds.min[0]), 40)
+
+  // ---- scale ----
+  const scaled = scalePart(mesh, ids, 0, [2, 2, 2])
+  check('scaling one part leaves the count alone', scaled.triangleCount, 24)
+  check('the scaled part doubled', round(scaled.bounds.size[2]), 20)
+  check('about its own centre', round(scaled.bounds.min[2]), -5)
+  check('the other part did not move', round(scaled.bounds.max[0]), 50)
+  check('and both are still solid', analyseMesh(scaled).watertight, true)
+
+  // ---- rotate ----
+  // A 10 x 20 x 30 box turned a quarter turn about Z should read 20 x 10 x 30.
+  const boxFaces = cubeTriangles(1).map((face) =>
+    face.map((value, i) => value * [10, 20, 30][i % 3]!),
+  )
+  const box = pipeline(boxFaces)
+  const turned = rotatePart(box.mesh, new Uint32Array(box.mesh.triangleCount), null, 2, 90)
+  check('a quarter turn swaps X and Y', [round(turned.bounds.size[0]), round(turned.bounds.size[1])], [20, 10])
+  check('and leaves Z alone', round(turned.bounds.size[2]), 30)
+  check('rotation keeps it solid', analyseMesh(turned).watertight, true)
+  check('and keeps it facing out', analyseMesh(turned).shells[0]!.signedVolume > 0, true)
+
+  // ---- concat ----
+  const joined = concatMeshes(extractShell(mesh, ids, 0), extractShell(mesh, ids, 1))
+  check('concat keeps both parts apart', analyseMesh(joined).shells.length, 2)
+}
+
+console.log('\nediting: cutting along a plane')
+{
+  const { mesh } = pipeline(cubeTriangles(10))
+  const zPlane = { normal: [0, 0, 1] as [number, number, number], offset: 5 }
+
+  const both = cutMesh(mesh, zPlane, 'both', DEFAULT_SETTINGS.weldEpsilon)
+  const bothAnalysis = analyseMesh(both.mesh)
+  check('the plane split 8 side triangles', both.splitTriangles, 8)
+  // Each of the four walls is two triangles, so the cut crosses eight of them
+  // and the square hole comes back as an eight-point loop — four corners plus
+  // the four places the plane crossed a wall's diagonal. Ear clipping an
+  // eight-gon is six triangles, and there are two faces to close.
+  check('both faces were capped', both.capTriangles, 12)
+  check('one cube became two parts', bothAnalysis.shells.length, 2)
+  check('both parts are watertight', bothAnalysis.watertight, true)
+  check('no boundary left open', bothAnalysis.boundaryEdges.length, 0)
+  check('no non-manifold edges', bothAnalysis.nonManifoldEdges.length, 0)
+  check('the pair still spans the original', both.mesh.bounds.size.map(round), [10, 10, 10])
+  // Two 10 x 10 x 5 halves: 500 each, 1000 together, same as the whole cube.
+  check(
+    'and encloses the same volume',
+    round(bothAnalysis.shells.reduce((sum, s) => sum + s.signedVolume, 0)),
+    1000,
+  )
+  check('each half facing out', bothAnalysis.shells.every((s) => s.signedVolume > 0), true)
+
+  const top = cutMesh(mesh, zPlane, 'front', DEFAULT_SETTINGS.weldEpsilon)
+  const topAnalysis = analyseMesh(top.mesh)
+  check('keeping the front gives one part', topAnalysis.shells.length, 1)
+  check('watertight', topAnalysis.watertight, true)
+  check('half as tall', round(top.mesh.bounds.size[2]), 5)
+  check('and it is the top half', [round(top.mesh.bounds.min[2]), round(top.mesh.bounds.max[2])], [5, 10])
+
+  const bottom = cutMesh(mesh, zPlane, 'back', DEFAULT_SETTINGS.weldEpsilon)
+  check('keeping the back gives the other half', round(bottom.mesh.bounds.max[2]), 5)
+  check('also watertight', analyseMesh(bottom.mesh).watertight, true)
+
+  // A diagonal plane through the middle: the whole point of drawing the line
+  // rather than sliding an axis.
+  const diagonal = {
+    normal: [Math.SQRT1_2, 0, Math.SQRT1_2] as [number, number, number],
+    offset: Math.SQRT1_2 * 10,
+  }
+  const sliced = cutMesh(mesh, diagonal, 'both', DEFAULT_SETTINGS.weldEpsilon)
+  const slicedAnalysis = analyseMesh(sliced.mesh)
+  check('a diagonal cut also makes two parts', slicedAnalysis.shells.length, 2)
+  check('both watertight', slicedAnalysis.watertight, true)
+  check(
+    'and conserves the volume',
+    round(slicedAnalysis.shells.reduce((sum, s) => sum + s.signedVolume, 0)),
+    1000,
+  )
+
+  // A plane that misses entirely must not claim to have cut anything.
+  const missed = cutMesh(mesh, { normal: [0, 0, 1], offset: 50 }, 'both', DEFAULT_SETTINGS.weldEpsilon)
+  check('a plane that misses splits nothing', missed.splitTriangles, 0)
+  check('and caps nothing', missed.capTriangles, 0)
+  check('leaving the mesh whole', analyseMesh(missed.mesh).shells.length, 1)
+
+  // Cutting one part of a two-part model leaves the other untouched.
+  const pair = pipeline([
+    ...cubeTriangles(10),
+    ...cubeTriangles(10).map((face) => face.map((v, i) => (i % 3 === 0 ? v + 40 : v))),
+  ])
+  const pairIds = new Uint32Array(pair.mesh.triangleCount)
+  pair.analysis.shells.forEach((shell, index) => {
+    for (const t of shell.triangles) pairIds[t] = index
+  })
+  const oneCut = cutPart(pair.mesh, pairIds, 0, zPlane, 'both', DEFAULT_SETTINGS.weldEpsilon)
+  const oneCutAnalysis = analyseMesh(oneCut.mesh)
+  check('cutting one part of two gives three', oneCutAnalysis.shells.length, 3)
+  check('all still watertight', oneCutAnalysis.watertight, true)
+}
+
 
 console.log(`\n${checks - failures}/${checks} checks passed`)
 if (failures > 0) process.exit(1)

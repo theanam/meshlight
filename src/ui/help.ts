@@ -53,7 +53,7 @@ const STEPS: { art: string; caption: string; note: string }[] = [
   { art: stepArt.drop, caption: 'Drop a mesh', note: 'STL · OBJ · PLY · 3MF' },
   { art: stepArt.local, caption: 'Read in your browser', note: 'nothing is uploaded' },
   { art: stepArt.score, caption: 'Score and issues', note: 'every defect, located' },
-  { art: stepArt.fix, caption: 'Fix or cut open', note: 'repair · slice · measure' },
+  { art: stepArt.fix, caption: 'Fix, edit, export', note: 'repair · cut · resize' },
 ]
 
 /** The same three colours the viewport paints defects in. Repeating them here

@@ -204,11 +204,17 @@ export class Viewport {
     this.fitCamera()
   }
 
+  /** Replace the geometry on screen.
+   *
+   *  `keepCamera` is what an edit passes. Refitting after every scale or cut
+   *  would swing the view each time, and the one thing you need after an edit
+   *  is to see what changed from where you were already looking. */
   setModel(
     positions: Float32Array,
     indices: Uint32Array,
     bounds: Bounds,
     shellIds: Uint32Array,
+    keepCamera = false,
   ): void {
     this.clearModel()
     this.bounds = bounds
@@ -246,7 +252,7 @@ export class Viewport {
     this.buildGround()
     this.buildBox()
     this.buildPlate()
-    this.fitCamera()
+    if (!keepCamera) this.fitCamera()
   }
 
   setBoxVisible(visible: boolean): void {
@@ -925,6 +931,54 @@ export class Viewport {
       material.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 0, -1), z)]
     }
     material.needsUpdate = true
+  }
+
+  /** Suspend orbiting while a tool owns the pointer.
+   *
+   *  Drawing a cut line is a drag across the canvas, and so is turning the
+   *  model. One of them has to stand down for the duration or the line comes
+   *  out drawn on a view that moved under it. */
+  setInteractive(enabled: boolean): void {
+    this.controls.enabled = enabled
+  }
+
+  /** The plane that projects onto the line drawn between two screen points.
+   *
+   *  A line on screen does not name a plane by itself — it names every plane
+   *  containing it. The one the user means is the one they cannot see edge-on
+   *  moving: the plane through the eye and the two points, which under this
+   *  camera is exactly the set of world points that land on that line. Cut
+   *  along it and the seam follows the drawn stroke precisely.
+   *
+   *  Returns null for a stroke too short to have a direction, which would
+   *  otherwise yield a normal of zero length and a plane through everything. */
+  planeFromScreenLine(
+    from: [number, number],
+    to: [number, number],
+  ): { normal: [number, number, number]; offset: number } | null {
+    const rect = this.canvas.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+    if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 8) return null
+
+    const toWorld = (point: [number, number]): THREE.Vector3 =>
+      new THREE.Vector3(
+        ((point[0] - rect.left) / rect.width) * 2 - 1,
+        -((point[1] - rect.top) / rect.height) * 2 + 1,
+        0.5,
+      ).unproject(this.camera)
+
+    const eye = this.camera.position.clone()
+    const a = toWorld(from).sub(eye)
+    const b = toWorld(to).sub(eye)
+
+    const normal = new THREE.Vector3().crossVectors(a, b)
+    if (normal.lengthSq() === 0) return null
+    normal.normalize()
+
+    return {
+      normal: [normal.x, normal.y, normal.z],
+      offset: normal.dot(eye),
+    }
   }
 
   fitCamera(): void {
