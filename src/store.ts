@@ -1,4 +1,5 @@
 import type { RepairOptions } from './core/repair'
+import type { Readiness } from './core/readiness'
 import type { Score, Settings } from './core/types'
 import { DEFAULT_SETTINGS } from './core/types'
 import type { LoadedPayload, RepairPreview } from './worker/protocol'
@@ -10,6 +11,7 @@ export interface State {
   mode: Mode
   model: LoadedPayload | null
   score: Score | null
+  readiness: Readiness | null
   settings: Settings
   fileName: string | null
   shaded: boolean
@@ -63,6 +65,7 @@ function initialState(): State {
     mode: 'report',
     model: null,
     score: null,
+    readiness: null,
     settings,
     fileName: null,
     shaded: true,

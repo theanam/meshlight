@@ -8,7 +8,9 @@ import { scoreMesh } from '../src/core/score'
 import { buildZBuckets, sectionAt } from '../src/core/section'
 // Aliased: this file has its own toBinaryStl fixture helper.
 import { repairMesh, toBinaryStl as exportStl } from '../src/core/repair'
-import { StlParseError, parseStl } from '../src/core/stl-parser'
+import { MeshParseError } from '../src/core/formats/errors'
+import { parseStl } from '../src/core/formats/stl'
+import { parseMesh } from '../src/core/mesh-loader'
 import { DEFAULT_SETTINGS, MAX_INSTANCES } from '../src/core/types'
 
 let failures = 0
@@ -84,7 +86,7 @@ function pipeline(faces: number[][], binary = true) {
 console.log('\nclean cube (binary)')
 {
   const { raw, mesh, analysis } = pipeline(cubeTriangles())
-  check('format detected', raw.format, 'binary')
+  check('format detected', raw.format, 'STL (binary)')
   check('12 triangles', mesh.triangleCount, 12)
   check('welds to 8 vertices', mesh.vertexCount, 8)
   check('watertight', analysis.watertight, true)
@@ -100,7 +102,7 @@ console.log('\nclean cube (binary)')
 console.log('\nclean cube (ascii)')
 {
   const { raw, mesh, analysis } = pipeline(cubeTriangles(), false)
-  check('format detected', raw.format, 'ascii')
+  check('format detected', raw.format, 'STL (ascii)')
   check('12 triangles', mesh.triangleCount, 12)
   check('welds to 8 vertices', mesh.vertexCount, 8)
   check('watertight', analysis.watertight, true)
@@ -342,6 +344,277 @@ console.log('\nrepair: export round-trips')
   check('bounds preserved', reloaded.bounds.size.map((n) => Math.round(n)), [10, 10, 10])
 }
 
+// ---------------------------------------------------------------------------
+// Other mesh formats. Each one is fed the same cube and must land on exactly
+// the same topology as the STL path, since everything downstream assumes it.
+// ---------------------------------------------------------------------------
+
+function toObj(faces: number[][]): ArrayBuffer {
+  let text = '# test cube\n'
+  const seen = new Map<string, number>()
+  const order: string[] = []
+  const indexOf = (x: number, y: number, z: number): number => {
+    const key = `${x} ${y} ${z}`
+    let i = seen.get(key)
+    if (i === undefined) { i = seen.size + 1; seen.set(key, i); order.push(key) }
+    return i
+  }
+  const lines: string[] = []
+  for (const f of faces) {
+    const a = indexOf(f[0]!, f[1]!, f[2]!)
+    const b = indexOf(f[3]!, f[4]!, f[5]!)
+    const c = indexOf(f[6]!, f[7]!, f[8]!)
+    lines.push(`f ${a}//1 ${b}//1 ${c}//1`)
+  }
+  for (const key of order) text += `v ${key}\n`
+  text += 'vn 0 0 1\n' + lines.join('\n') + '\n'
+  return new TextEncoder().encode(text).buffer as ArrayBuffer
+}
+
+function toAsciiPly(faces: number[][]): ArrayBuffer {
+  const seen = new Map<string, number>()
+  const order: string[] = []
+  const indexOf = (x: number, y: number, z: number): number => {
+    const key = `${x} ${y} ${z}`
+    let i = seen.get(key)
+    if (i === undefined) { i = seen.size; seen.set(key, i); order.push(key) }
+    return i
+  }
+  const faceLines = faces.map((f) =>
+    `3 ${indexOf(f[0]!, f[1]!, f[2]!)} ${indexOf(f[3]!, f[4]!, f[5]!)} ${indexOf(f[6]!, f[7]!, f[8]!)}`)
+  const text =
+    'ply\nformat ascii 1.0\n' +
+    `element vertex ${order.length}\nproperty float x\nproperty float y\nproperty float z\n` +
+    `element face ${faces.length}\nproperty list uchar int vertex_indices\nend_header\n` +
+    order.join('\n') + '\n' + faceLines.join('\n') + '\n'
+  return new TextEncoder().encode(text).buffer as ArrayBuffer
+}
+
+function toBinaryPly(faces: number[][]): ArrayBuffer {
+  const seen = new Map<string, number[]>()
+  const order: number[][] = []
+  const indexOf = (x: number, y: number, z: number): number => {
+    const key = `${x} ${y} ${z}`
+    if (!seen.has(key)) { seen.set(key, [x, y, z]); order.push([x, y, z]) }
+    return order.findIndex((v) => v[0] === x && v[1] === y && v[2] === z)
+  }
+  const tris = faces.map((f) => [
+    indexOf(f[0]!, f[1]!, f[2]!), indexOf(f[3]!, f[4]!, f[5]!), indexOf(f[6]!, f[7]!, f[8]!),
+  ])
+  const header =
+    'ply\nformat binary_little_endian 1.0\n' +
+    `element vertex ${order.length}\nproperty float x\nproperty float y\nproperty float z\n` +
+    `element face ${tris.length}\nproperty list uchar int vertex_indices\nend_header\n`
+  const head = new TextEncoder().encode(header)
+  const body = new ArrayBuffer(order.length * 12 + tris.length * 13)
+  const view = new DataView(body)
+  let o = 0
+  for (const v of order) { for (const n of v) { view.setFloat32(o, n, true); o += 4 } }
+  for (const t of tris) {
+    view.setUint8(o, 3); o += 1
+    for (const n of t) { view.setInt32(o, n, true); o += 4 }
+  }
+  const out = new Uint8Array(head.length + body.byteLength)
+  out.set(head, 0)
+  out.set(new Uint8Array(body), head.length)
+  return out.buffer as ArrayBuffer
+}
+
+console.log('\nOBJ')
+{
+  const mesh = indexMesh(await parseMesh(toObj(cubeTriangles()), 'cube.obj'), DEFAULT_SETTINGS.weldEpsilon)
+  const a = analyseMesh(mesh)
+  check('12 triangles', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', a.watertight, true)
+  check('outward facing', a.shells[0]!.signedVolume > 0, true)
+}
+
+console.log('\nOBJ with negative indices and quads')
+{
+  // A single quad written with relative indices, as streaming exporters do.
+  const text = 'v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\nf -4 -3 -2 -1\n'
+  const raw = await parseMesh(new TextEncoder().encode(text).buffer as ArrayBuffer, 'quad.obj')
+  check('quad fans into 2 triangles', raw.triangleCount, 2)
+  check('format reported', raw.format, 'OBJ')
+}
+
+console.log('\nPLY (ascii)')
+{
+  const raw = await parseMesh(toAsciiPly(cubeTriangles()), 'cube.ply')
+  const mesh = indexMesh(raw, DEFAULT_SETTINGS.weldEpsilon)
+  const a = analyseMesh(mesh)
+  check('format reported', raw.format, 'PLY (ascii)')
+  check('12 triangles', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', a.watertight, true)
+}
+
+console.log('\nPLY (binary)')
+{
+  const raw = await parseMesh(toBinaryPly(cubeTriangles()), 'cube.ply')
+  const mesh = indexMesh(raw, DEFAULT_SETTINGS.weldEpsilon)
+  const a = analyseMesh(mesh)
+  check('format reported', raw.format, 'PLY (binary)')
+  check('12 triangles', mesh.triangleCount, 12)
+  check('watertight', a.watertight, true)
+  check('outward facing', a.shells[0]!.signedVolume > 0, true)
+}
+
+console.log('\nformat sniffing beats the extension')
+{
+  // A PLY that claims to be an STL must still be read as a PLY.
+  const raw = await parseMesh(toAsciiPly(cubeTriangles()), 'mislabelled.stl')
+  check('sniffed as PLY', raw.format, 'PLY (ascii)')
+}
+
+/** Build a real ZIP so the 3MF path exercises the container, not a stub.
+ *  `deflate` uses CompressionStream, the mirror of the reader's own
+ *  DecompressionStream, so both halves are the platform's. */
+async function toZip(
+  entries: { name: string; text: string }[],
+  deflate: boolean,
+): Promise<ArrayBuffer> {
+  const encoder = new TextEncoder()
+  const locals: Uint8Array[] = []
+  const centrals: Uint8Array[] = []
+  let offset = 0
+
+  for (const entry of entries) {
+    const nameBytes = encoder.encode(entry.name)
+    const rawBytes = encoder.encode(entry.text)
+    const data = deflate
+      ? new Uint8Array(
+          await new Response(
+            new Blob([rawBytes as BlobPart]).stream().pipeThrough(new CompressionStream('deflate-raw')),
+          ).arrayBuffer(),
+        )
+      : rawBytes
+
+    const local = new Uint8Array(30 + nameBytes.length + data.length)
+    const lv = new DataView(local.buffer)
+    lv.setUint32(0, 0x04034b50, true)
+    lv.setUint16(8, deflate ? 8 : 0, true)
+    lv.setUint32(18, data.length, true)
+    lv.setUint32(22, rawBytes.length, true)
+    lv.setUint16(26, nameBytes.length, true)
+    local.set(nameBytes, 30)
+    local.set(data, 30 + nameBytes.length)
+    locals.push(local)
+
+    const central = new Uint8Array(46 + nameBytes.length)
+    const cv = new DataView(central.buffer)
+    cv.setUint32(0, 0x02014b50, true)
+    cv.setUint16(10, deflate ? 8 : 0, true)
+    cv.setUint32(20, data.length, true)
+    cv.setUint32(24, rawBytes.length, true)
+    cv.setUint16(28, nameBytes.length, true)
+    cv.setUint32(42, offset, true)
+    central.set(nameBytes, 46)
+    centrals.push(central)
+
+    offset += local.length
+  }
+
+  const centralSize = centrals.reduce((n, c) => n + c.length, 0)
+  const eocd = new Uint8Array(22)
+  const ev = new DataView(eocd.buffer)
+  ev.setUint32(0, 0x06054b50, true)
+  ev.setUint16(8, entries.length, true)
+  ev.setUint16(10, entries.length, true)
+  ev.setUint32(12, centralSize, true)
+  ev.setUint32(16, offset, true)
+
+  const total = offset + centralSize + 22
+  const out = new Uint8Array(total)
+  let cursor = 0
+  for (const part of [...locals, ...centrals, eocd]) { out.set(part, cursor); cursor += part.length }
+  return out.buffer as ArrayBuffer
+}
+
+function modelXml(faces: number[][], unit = 'millimeter', transform?: string): string {
+  const seen = new Map<string, number>()
+  const order: string[] = []
+  const indexOf = (x: number, y: number, z: number): number => {
+    const key = `${x},${y},${z}`
+    let i = seen.get(key)
+    if (i === undefined) { i = seen.size; seen.set(key, i); order.push(key) }
+    return i
+  }
+  const tris = faces.map((f) =>
+    `<triangle v1="${indexOf(f[0]!, f[1]!, f[2]!)}" v2="${indexOf(f[3]!, f[4]!, f[5]!)}" v3="${indexOf(f[6]!, f[7]!, f[8]!)}" />`)
+  const verts = order.map((k) => {
+    const [x, y, z] = k.split(',')
+    return `<vertex x="${x}" y="${y}" z="${z}" />`
+  })
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="${unit}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+ <resources>
+  <object id="1" type="model">
+   <mesh>
+    <vertices>${verts.join('')}</vertices>
+    <triangles>${tris.join('')}</triangles>
+   </mesh>
+  </object>
+ </resources>
+ <build><item objectid="1"${transform ? ` transform="${transform}"` : ''} /></build>
+</model>`
+}
+
+console.log('\n3MF (stored)')
+{
+  const zip = await toZip([{ name: '3D/3dmodel.model', text: modelXml(cubeTriangles()) }], false)
+  const raw = await parseMesh(zip, 'cube.3mf')
+  const mesh = indexMesh(raw, DEFAULT_SETTINGS.weldEpsilon)
+  const a = analyseMesh(mesh)
+  check('format reported', raw.format, '3MF')
+  check('12 triangles', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', a.watertight, true)
+  check('outward facing', a.shells[0]!.signedVolume > 0, true)
+}
+
+console.log('\n3MF (deflated, with other entries)')
+{
+  const zip = await toZip([
+    { name: '[Content_Types].xml', text: '<Types/>' },
+    { name: '_rels/.rels', text: '<Relationships/>' },
+    { name: '3D/3dmodel.model', text: modelXml(cubeTriangles()) },
+  ], true)
+  const mesh = indexMesh(await parseMesh(zip, 'cube.3mf'), DEFAULT_SETTINGS.weldEpsilon)
+  check('finds the model past other entries', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', analyseMesh(mesh).watertight, true)
+}
+
+console.log('\n3MF units are converted to mm')
+{
+  const zip = await toZip([{ name: '3D/3dmodel.model', text: modelXml(cubeTriangles(1), 'inch') }], true)
+  const raw = await parseMesh(zip, 'inches.3mf')
+  const mesh = indexMesh(raw, DEFAULT_SETTINGS.weldEpsilon)
+  check('unit noted in the format', raw.format, '3MF (inch)')
+  check('1 inch cube becomes 25.4 mm', mesh.bounds.size.map((n) => Math.round(n * 10) / 10), [25.4, 25.4, 25.4])
+}
+
+console.log('\n3MF build transforms are applied')
+{
+  // Translate the cube 100mm along X via the build item transform.
+  const zip = await toZip(
+    [{ name: '3D/3dmodel.model', text: modelXml(cubeTriangles(), 'millimeter', '1 0 0 0 1 0 0 0 1 100 0 0') }],
+    true,
+  )
+  const mesh = indexMesh(await parseMesh(zip, 'moved.3mf'), DEFAULT_SETTINGS.weldEpsilon)
+  check('translated on X', Math.round(mesh.bounds.min[0]), 100)
+  check('size unchanged', mesh.bounds.size.map((n) => Math.round(n)), [10, 10, 10])
+}
+
+console.log('\n3MF sniffed without an extension')
+{
+  const zip = await toZip([{ name: '3D/3dmodel.model', text: modelXml(cubeTriangles()) }], true)
+  const raw = await parseMesh(zip, 'no-extension')
+  check('recognised from its ZIP magic', raw.format, '3MF')
+}
+
 console.log('\nmalformed input')
 {
   const bad = (buffer: ArrayBuffer): string => {
@@ -349,12 +622,12 @@ console.log('\nmalformed input')
       parseStl(buffer)
       return 'no error'
     } catch (error) {
-      return error instanceof StlParseError ? 'StlParseError' : 'wrong error'
+      return error instanceof MeshParseError ? 'MeshParseError' : 'wrong error'
     }
   }
-  check('empty file', bad(new ArrayBuffer(0)), 'StlParseError')
-  check('tiny file', bad(new ArrayBuffer(4)), 'StlParseError')
-  check('random bytes', bad(new TextEncoder().encode('this is not an stl at all').buffer as ArrayBuffer), 'StlParseError')
+  check('empty file', bad(new ArrayBuffer(0)), 'MeshParseError')
+  check('tiny file', bad(new ArrayBuffer(4)), 'MeshParseError')
+  check('random bytes', bad(new TextEncoder().encode('this is not an stl at all').buffer as ArrayBuffer), 'MeshParseError')
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`)

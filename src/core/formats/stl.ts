@@ -1,13 +1,5 @@
-import type { RawMesh } from './types'
-
-/** Thrown for anything the user should see a readable message about
- *  (spec §5.1: corrupt file, wrong format, empty mesh). */
-export class StlParseError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'StlParseError'
-  }
-}
+import { MeshParseError } from './errors'
+import type { RawMesh } from '../types'
 
 const BINARY_HEADER_BYTES = 84
 const BINARY_TRIANGLE_BYTES = 50
@@ -26,7 +18,7 @@ function isBinary(buffer: ArrayBuffer): boolean {
 function parseBinary(buffer: ArrayBuffer): RawMesh {
   const view = new DataView(buffer)
   const triangleCount = view.getUint32(80, true)
-  if (triangleCount === 0) throw new StlParseError('This STL declares zero triangles.')
+  if (triangleCount === 0) throw new MeshParseError('This STL declares zero triangles.')
 
   const positions = new Float32Array(triangleCount * 9)
   const fileNormals = new Float32Array(triangleCount * 3)
@@ -46,7 +38,7 @@ function parseBinary(buffer: ArrayBuffer): RawMesh {
     offset += BINARY_TRIANGLE_BYTES
   }
 
-  return { positions, fileNormals, triangleCount, format: 'binary' }
+  return { positions, fileNormals, triangleCount, format: 'STL (binary)' }
 }
 
 function parseAscii(buffer: ArrayBuffer): RawMesh {
@@ -78,19 +70,19 @@ function parseAscii(buffer: ArrayBuffer): RawMesh {
 
   const triangleCount = positions.length / 9
   if (triangleCount === 0) {
-    throw new StlParseError('No triangles found — this does not look like an STL file.')
+    throw new MeshParseError('No triangles found — this does not look like an STL file.')
   }
 
   return {
     positions: new Float32Array(positions),
     fileNormals: new Float32Array(fileNormals),
     triangleCount,
-    format: 'ascii',
+    format: 'STL (ascii)',
   }
 }
 
 export function parseStl(buffer: ArrayBuffer): RawMesh {
-  if (buffer.byteLength === 0) throw new StlParseError('That file is empty.')
-  if (buffer.byteLength < 15) throw new StlParseError('That file is too small to be an STL.')
+  if (buffer.byteLength === 0) throw new MeshParseError('That file is empty.')
+  if (buffer.byteLength < 15) throw new MeshParseError('That file is too small to be an STL.')
   return isBinary(buffer) ? parseBinary(buffer) : parseAscii(buffer)
 }

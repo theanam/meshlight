@@ -1,3 +1,4 @@
+import type { Readiness } from '../core/readiness'
 import type { RepairOptions, RepairStats } from '../core/repair'
 import type { Bounds, Issue, Score, Settings } from '../core/types'
 
@@ -11,7 +12,7 @@ export interface Highlights {
 }
 
 export interface LoadedPayload {
-  format: 'binary' | 'ascii'
+  format: string
   byteLength: number
   triangleCount: number
   vertexCount: number
@@ -26,6 +27,8 @@ export interface LoadedPayload {
   shellCount: number
   elapsedMs: number
   score: Score
+  /** Practical print checks — detail size, supports, adhesion, fit. */
+  readiness: Readiness
   highlights: Highlights
 }
 
@@ -46,7 +49,7 @@ export interface RepairPreview {
 }
 
 export type WorkerRequest =
-  | { type: 'load'; buffer: ArrayBuffer; settings: Settings }
+  | { type: 'load'; buffer: ArrayBuffer; settings: Settings; fileName: string }
   | { type: 'section'; z: number }
   | { type: 'rescore'; settings: Settings }
   | { type: 'repair'; options: RepairOptions }
@@ -56,7 +59,7 @@ export type WorkerResponse =
   | { type: 'progress'; stage: string; fraction: number }
   | { type: 'loaded'; payload: LoadedPayload }
   | { type: 'section'; z: number; segments: Float32Array }
-  | { type: 'scored'; score: Score }
+  | { type: 'scored'; score: Score; readiness: Readiness }
   | { type: 'repaired'; preview: RepairPreview }
   | { type: 'exported'; stl: ArrayBuffer }
   | { type: 'error'; message: string }

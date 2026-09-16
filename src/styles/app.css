@@ -581,6 +581,60 @@ input[type='range']:active::-webkit-slider-thumb { cursor: grabbing; }
 .card:hover .card__arrow { color: var(--ink-muted); }
 .card[aria-expanded='true'] .card__arrow { color: var(--accent); }
 
+/* ---- printing readiness --------------------------------------------- */
+
+.readiness {
+  padding: 22px 28px 26px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.readiness__head { display: flex; flex-direction: column; gap: 6px; }
+.readiness__verdict {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.ready-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* The status bar runs down the left edge, matching the issue cards above it,
+   so the eye reads one column of severity down the whole panel. */
+.ready {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--row-active);
+  border-left: 2px solid var(--line-control);
+}
+.ready.is-pass { border-left-color: var(--accent); }
+.ready.is-warn { border-left-color: var(--defect-flipped); }
+.ready.is-fail { border-left-color: var(--defect-nonmanifold); }
+
+.ready__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ready__title { font-size: var(--text-base); font-weight: 600; }
+.ready__metric { font-size: var(--text-xs); white-space: nowrap; }
+
+.ready__finding {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ink-dim);
+  text-wrap: pretty;
+}
+.ready__advice {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ink-muted);
+  text-wrap: pretty;
+}
+
 /* shared status colours, used by the breakdown values and meters */
 
 .is-pass { color: var(--accent); }
@@ -770,6 +824,12 @@ input[type='number'] {
 }
 .drop__title { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
 .drop__lede { font-size: var(--text-lg); line-height: 1.6; color: var(--ink-muted); max-width: 46ch; text-wrap: pretty; }
+.drop__formats {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  color: var(--ink-faint);
+}
+
 .drop__promise {
   display: flex; align-items: center; gap: 9px;
   font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-muted);

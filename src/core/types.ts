@@ -8,7 +8,8 @@ export interface RawMesh {
   /** Per-triangle normal as written in the file, 3 floats per triangle. */
   fileNormals: Float32Array
   triangleCount: number
-  format: 'binary' | 'ascii'
+  /** Human-readable source format, e.g. "STL (binary)" or "OBJ". */
+  format: string
 }
 
 export interface IndexedMesh {

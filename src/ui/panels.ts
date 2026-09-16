@@ -1,3 +1,4 @@
+import type { Readiness } from '../core/readiness'
 import type { RepairOptions } from '../core/repair'
 import type { Issue, IssueKind, Score, Settings } from '../core/types'
 import type { RepairPreview } from '../worker/protocol'
@@ -178,6 +179,35 @@ export function renderBreakdown(score: Score): string {
       <span class="report__eyebrow mono">Score breakdown</span>
       <div class="bd-list">${rows}</div>
     </div>`
+}
+
+/** The readiness section: one row per practical question about printing this
+ *  part. It sits under the issues rather than beside the score, because the
+ *  score answers "is this mesh sound" and these answer "what happens when I
+ *  press print" — related, but you act on them at different moments. */
+export function renderReadiness(readiness: Readiness): string {
+  const rows = readiness.checks
+    .map(
+      (check) => `
+        <div class="ready is-${check.status}">
+          <div class="ready__head">
+            <span class="ready__title">${escapeHtml(check.title)}</span>
+            <span class="ready__metric mono is-${check.status}">${escapeHtml(check.metric)}</span>
+          </div>
+          <p class="ready__finding">${escapeHtml(check.finding)}</p>
+          <p class="ready__advice">${escapeHtml(check.advice)}</p>
+        </div>`,
+    )
+    .join('')
+
+  return `
+    <section class="readiness">
+      <div class="readiness__head">
+        <span class="report__eyebrow mono">3D printing readiness</span>
+        <p class="readiness__verdict">${escapeHtml(readiness.verdict)}</p>
+      </div>
+      <div class="ready-list">${rows}</div>
+    </section>`
 }
 
 export function renderSettings(settings: Settings): string {

@@ -1,3 +1,4 @@
+import { FILE_INPUT_ACCEPT, SUPPORTED_EXTENSIONS, baseName } from '../core/mesh-loader'
 import { DEFAULT_SETTINGS } from '../core/types'
 import type { RepairOptions } from '../core/repair'
 import type { Settings } from '../core/types'
@@ -12,6 +13,7 @@ import {
   renderBreakdown,
   renderFix,
   renderIssues,
+  renderReadiness,
   renderScoreHeader,
   renderSettings,
   repairChoices,
@@ -98,7 +100,7 @@ export function mountApp(root: HTMLElement): void {
     // The worker takes ownership of the buffer it receives, so keep our own
     // copy for re-runs rather than reading the source a second time.
     lastBuffer = buffer.slice(0)
-    send({ type: 'load', buffer, settings: store.get().settings }, [buffer])
+    send({ type: 'load', buffer, settings: store.get().settings, fileName: name }, [buffer])
   }
 
   async function loadFile(file: File): Promise<void> {
@@ -158,6 +160,7 @@ export function mountApp(root: HTMLElement): void {
         store.set({
           model: payload,
           score: payload.score,
+          readiness: payload.readiness,
           busy: false,
           error: null,
           selectedIssue: null,
@@ -177,7 +180,7 @@ export function mountApp(root: HTMLElement): void {
       }
 
       case 'scored':
-        store.set({ score: message.score })
+        store.set({ score: message.score, readiness: message.readiness })
         break
 
       case 'repaired': {
@@ -190,7 +193,7 @@ export function mountApp(root: HTMLElement): void {
 
       case 'exported': {
         // Straight to the user's downloads — no server is ever involved.
-        const base = (store.get().fileName ?? 'model.stl').replace(/\.stl$/i, '')
+        const base = baseName(store.get().fileName ?? 'model')
         const url = URL.createObjectURL(new Blob([message.stl], { type: 'model/stl' }))
         const link = document.createElement('a')
         link.href = url
@@ -429,7 +432,10 @@ export function mountApp(root: HTMLElement): void {
     if (!lastBuffer) return
     const buffer = lastBuffer.slice(0)
     store.set({ busy: true, error: null })
-    send({ type: 'load', buffer, settings: store.get().settings }, [buffer])
+    send(
+      { type: 'load', buffer, settings: store.get().settings, fileName: store.get().fileName ?? '' },
+      [buffer],
+    )
   })
 
   // Development only. Vite substitutes `false` for import.meta.env.DEV in a
@@ -513,7 +519,7 @@ export function mountApp(root: HTMLElement): void {
       chip.querySelector('.chip__meta')!.textContent = previewMesh
         ? `${m.triangleCount.toLocaleString()} → ${previewMesh.triangleCount.toLocaleString()} tri`
         :
-        `${m.triangleCount.toLocaleString()} tri · ${m.bounds.size.map((n) => n.toFixed(1)).join(' × ')} mm${grid}`
+        `${m.format} · ${m.triangleCount.toLocaleString()} tri · ${m.bounds.size.map((n) => n.toFixed(1)).join(' × ')} mm${grid}`
     }
 
     if (state.score) {
@@ -572,14 +578,15 @@ export function mountApp(root: HTMLElement): void {
       panelBody.innerHTML =
         state.mode === 'setup'
           ? renderSettings(state.settings)
-          : '<p class="empty">Drop an STL to get started. Nothing is uploaded — the file is read right here in this tab.</p>'
+          : '<p class="empty">Drop a mesh to get started. Nothing is uploaded — the file is read right here in this tab.</p>'
     } else if (isReport) {
-      panelBody.innerHTML = renderIssues(
-        filterIssues(state.model!.issues, state.filter),
-        state.selectedIssue,
-        state.expandedIssue,
-        state.selectedInstance,
-      )
+      panelBody.innerHTML =
+        renderIssues(
+          filterIssues(state.model!.issues, state.filter),
+          state.selectedIssue,
+          state.expandedIssue,
+          state.selectedInstance,
+        ) + (state.readiness ? renderReadiness(state.readiness) : '')
     } else if (state.mode === 'fix') {
       panelBody.innerHTML = renderFix(
         repairChoices(state.model!.issues),
@@ -732,11 +739,12 @@ function shellHtml(): string {
 
       <div class="drop">
         ${markSvg(56, 5)}
-        <h1 class="drop__title">Drop an STL</h1>
+        <h1 class="drop__title">Drop a mesh</h1>
         <p class="drop__lede">
-          Meshlight checks the mesh for holes, flipped faces and loose shells,
-          scores how well it will print, and lets you cut through it to see inside.
+          Meshlight checks it for holes, flipped faces and loose shells, scores how well
+          it will print, and lets you cut through it to see inside.
         </p>
+        <span class="drop__formats mono">${SUPPORTED_EXTENSIONS.map((e) => e.slice(1).toUpperCase()).join(' · ')}</span>
         <span class="drop__promise"><span class="dot"></span>nothing leaves your machine</span>
         <button class="btn btn--primary drop__cta" data-open-file>Choose a file</button>
         <p class="drop__error" role="alert"></p>
@@ -770,5 +778,5 @@ function shellHtml(): string {
     </aside>
   </div>
 
-  <input type="file" id="file-input" accept=".stl,model/stl" hidden>`
+  <input type="file" id="file-input" accept="${FILE_INPUT_ACCEPT}" hidden>`
 }

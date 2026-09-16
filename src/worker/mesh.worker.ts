@@ -3,9 +3,11 @@ import { analyseMesh, buildAdjacency } from '../core/analysis'
 import { indexMesh } from '../core/indexer'
 import { repairMesh, toBinaryStl } from '../core/repair'
 import type { RepairOptions } from '../core/repair'
+import { assessReadiness } from '../core/readiness'
 import { scoreMesh } from '../core/score'
 import { buildZBuckets, sectionAt } from '../core/section'
-import { StlParseError, parseStl } from '../core/stl-parser'
+import { MeshParseError } from '../core/formats/errors'
+import { parseMesh } from '../core/mesh-loader'
 import { DEFAULT_SETTINGS } from '../core/types'
 import type { Adjacency, Analysis, IndexedMesh, Score, Settings } from '../core/types'
 import type { LoadedPayload, RepairPreview, WorkerRequest, WorkerResponse } from './protocol'
@@ -64,11 +66,12 @@ function shellIdsFor(triangleCount: number, shells: { triangles: Uint32Array }[]
   return ids
 }
 
-function handleLoad(buffer: ArrayBuffer, incoming: Settings): void {
+async function handleLoad(buffer: ArrayBuffer, incoming: Settings, fileName: string): Promise<void> {
   settings = incoming
 
   post({ type: 'progress', stage: 'Reading file', fraction: 0.05 })
-  const raw = parseStl(buffer)
+  // 3MF has to inflate its container first, so reading is asynchronous now.
+  const raw = await parseMesh(buffer, fileName)
 
   post({ type: 'progress', stage: 'Welding vertices', fraction: 0.2 })
   mesh = indexMesh(raw, settings.weldEpsilon)
@@ -86,6 +89,7 @@ function handleLoad(buffer: ArrayBuffer, incoming: Settings): void {
 
   post({ type: 'progress', stage: 'Scoring printability', fraction: 0.85 })
   const score: Score = scoreMesh(mesh, analysis, buckets, settings)
+  const readiness = assessReadiness(mesh, analysis, buckets, settings)
 
   post({ type: 'progress', stage: 'Handing over', fraction: 0.95 })
   const payload: LoadedPayload = {
@@ -105,6 +109,7 @@ function handleLoad(buffer: ArrayBuffer, incoming: Settings): void {
     shellCount: analysis.shells.length,
     elapsedMs: analysis.elapsedMs,
     score,
+    readiness,
     highlights: {
       boundary: edgeLines(mesh, adjacency, analysis.boundaryEdges),
       nonManifold: edgeLines(mesh, adjacency, analysis.nonManifoldEdges),
@@ -158,7 +163,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   try {
     switch (request.type) {
       case 'load':
-        handleLoad(request.buffer, request.settings)
+        void handleLoad(request.buffer, request.settings, request.fileName).catch(reportError)
         break
 
       case 'section': {
@@ -188,17 +193,29 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       case 'rescore': {
         if (!mesh || !analysis) return
         settings = request.settings
-        post({ type: 'scored', score: scoreMesh(mesh, analysis, buckets, settings) })
+        // Both depend on nozzle diameter, overhang angle and build volume, so
+        // a settings change has to redo the pair of them.
+        post({
+          type: 'scored',
+          score: scoreMesh(mesh, analysis, buckets, settings),
+          readiness: assessReadiness(mesh, analysis, buckets, settings),
+        })
         break
       }
     }
   } catch (error) {
-    const message =
-      error instanceof StlParseError
-        ? error.message
-        : error instanceof Error
-          ? `Could not read that file — ${error.message}`
-          : 'Could not read that file.'
-    post({ type: 'error', message })
+    reportError(error)
   }
+}
+
+/** A parse failure is the user's problem to understand, so pass its own
+ *  wording through; anything else gets a generic wrapper. */
+function reportError(error: unknown): void {
+  const message =
+    error instanceof MeshParseError
+      ? error.message
+      : error instanceof Error
+        ? `Could not read that file — ${error.message}`
+        : 'Could not read that file.'
+  post({ type: 'error', message })
 }

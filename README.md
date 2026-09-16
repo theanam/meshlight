@@ -1,10 +1,13 @@
 # Meshlight
 
-**A browser-based STL mesh inspector that runs entirely on your machine.**
+**A browser-based mesh inspector that runs entirely on your machine.**
 
-Drop in an STL and Meshlight checks it for the things that ruin a print — holes,
+Drop in a mesh and Meshlight checks it for the things that ruin a print — holes,
 non-manifold edges, flipped normals, loose shells — scores how well it will
 actually print, and lets you cut through it to see the interior.
+
+Reads **STL** (binary and ascii), **OBJ**, **PLY** (ascii and both binary byte
+orders) and **3MF**.
 
 Your STL is not uploaded. There is no server to upload it to. The file is read
 in your browser tab and never leaves it, which is a property of how the app is
@@ -26,6 +29,24 @@ view. It never sees your file, which is parsed and analysed entirely in the
 tab and is never sent anywhere.
 
 ---
+
+## Formats
+
+| Format | Notes |
+| --- | --- |
+| STL | Binary and ascii. Detected by size arithmetic (`84 + 50n`), not the `solid` keyword, which binary exporters also write |
+| OBJ | `v` and `f` only. Negative (relative) indices and n-gons handled; materials, normals and texture coordinates ignored |
+| PLY | ascii, `binary_little_endian` and `binary_big_endian`. Extra vertex properties (colour, confidence) are skipped over |
+| 3MF | ZIP container inflated with the platform's own `DecompressionStream` — no bundled inflate. Units converted to mm, build-item and component transforms applied |
+
+Every format collapses to the same triangle soup in
+[`src/core/mesh-loader.ts`](src/core/mesh-loader.ts), so indexing, analysis,
+scoring, sectioning and repair never learn what the file was. Adding a format
+means adding a parser and nothing else.
+
+The loader sniffs magic bytes before trusting the extension, so a PLY saved as
+`.stl` still opens correctly — the detected format is shown next to the
+triangle count.
 
 ## Features
 
@@ -58,6 +79,31 @@ Clicking an issue frames that whole defect class and expands it into a list of
 every individual occurrence, each one clickable to fly the camera to that single
 bad edge or face. Lists are capped at 200 entries per issue; the count always
 reports the true total.
+
+### 3D printing readiness
+Under the issues sits a second pass that asks a different question. The score
+answers "is this mesh sound"; these answer "what happens when I press print" —
+a watertight, perfectly wound model can still be unprintable because it is
+0.2 mm thick or balanced on a corner. Each check states what was measured, then
+what to do about it:
+
+| Check | What it tells you |
+| --- | --- |
+| Fine detail | The thinnest feature in the model, against your nozzle. Under one nozzle width nothing is extruded at all, so the detail comes out as a gap rather than a thin wall |
+| Supports | How much of the surface area leans past your overhang angle, excluding the faces resting on the plate |
+| Bed adhesion | How much of the part lies flat on the plate, and over what area — a small footprint wants a brim |
+| Stability | Height against the narrowest footprint dimension; tall and narrow parts ring and shear off |
+| Plate fit | Whether it fits as it stands, only if rotated, or not at all |
+| Separate bodies | How many solids will be printed, and how many start in mid-air |
+
+Everything is measured, not guessed. Overhangs are weighted by area rather than
+face count, so one large downward face outranks a thousand tiny ones on a
+tessellated curve, and faces resting on the build plate are excluded — they
+point straight down and would otherwise read as the worst overhang in the
+model when they are in fact the first layer.
+
+The checks re-run when you change your nozzle, overhang angle or build volume
+in Setup, so they always describe the printer you are actually using.
 
 ### Fix
 Three repairs, each independently selectable, previewed before anything is
@@ -162,9 +208,9 @@ parse -> index/weld -> adjacency -> analysis -> score
                                -> Z-buckets -> section
 ```
 
-- [`src/core/stl-parser.ts`](src/core/stl-parser.ts) — binary and ASCII STL.
-  Format is sniffed by size arithmetic (`84 + 50n` bytes), not by the leading
-  `solid` keyword, which binary exporters also write.
+- [`src/core/mesh-loader.ts`](src/core/mesh-loader.ts) — format sniffing and
+  dispatch; the parsers themselves live in
+  [`src/core/formats/`](src/core/formats/).
 - [`src/core/indexer.ts`](src/core/indexer.ts) — STL is a triangle soup with no
   shared vertices, so corners are welded onto an epsilon grid before any
   topology question can be asked.
@@ -269,7 +315,7 @@ which reads as "this one" instead of "this is wrong".
 
 Per spec §6, deliberately deferred: heatmap overlays, volume and filament
 estimates, batch loading, arbitrary-angle cross sections, report export,
-OBJ/3MF import, and merging separate shells.
+and merging separate shells.
 
 Measurement is partial. The grid and the bounding box give you scale and overall
 dimensions; picking two points and measuring between them does not ship.

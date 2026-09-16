@@ -81,13 +81,18 @@ function rayTriangle(
  *  restricted to the Z-slab they start in — the same bucketing the slice
  *  viewer uses. It can miss a wall that runs steeply through many slabs,
  *  which is an acceptable trade for keeping the whole score interactive. */
-function measureThinWalls(
+/** Shoot a ray inward from a sample of faces and record how far it travels
+ *  before hitting the far wall. Exported because the readiness checks ask the
+ *  same question at a different threshold, and casting the rays twice for the
+ *  sake of module boundaries would be the wrong trade. */
+export function measureThinWalls(
   mesh: IndexedMesh,
   zBuckets: Uint32Array[],
   threshold: number,
+  samples = THICKNESS_SAMPLES,
 ): { thin: number; sampled: number; minimum: number } {
   const { triangleCount, bounds } = mesh
-  const step = Math.max(1, Math.floor(triangleCount / THICKNESS_SAMPLES))
+  const step = Math.max(1, Math.floor(triangleCount / samples))
   const spanZ = bounds.size[2] || 1
   const bucketCount = zBuckets.length
 
@@ -123,6 +128,18 @@ function measureThinWalls(
   }
 
   return { thin, sampled, minimum: minimum === Infinity ? 0 : minimum }
+}
+
+/** True when every corner of the face sits at the model's lowest Z — the part
+ *  of the model the bed is holding up. */
+function restsOnPlate(mesh: IndexedMesh, t: number, baseZ: number, epsilon: number): boolean {
+  const { positions: p, indices } = mesh
+  const a = indices[t * 3]!, b = indices[t * 3 + 1]!, c = indices[t * 3 + 2]!
+  return (
+    p[a * 3 + 2]! <= baseZ + epsilon &&
+    p[b * 3 + 2]! <= baseZ + epsilon &&
+    p[c * 3 + 2]! <= baseZ + epsilon
+  )
 }
 
 function clamp01(n: number): number {
@@ -162,9 +179,16 @@ export function scoreMesh(
   // Angle is measured from the build plate normal (+Z). A face steeper than
   // the threshold needs support; how much area is affected is what matters.
   const cosLimit = Math.cos(((90 + settings.overhangThreshold) * Math.PI) / 180)
+  // Faces resting on the build plate point straight down, so they read as the
+  // steepest overhang in the model when they are in fact the first layer.
+  // Excluding them is what stops a flat-bottomed box scoring as if a third of
+  // it needed support.
+  const plateEpsilon = Math.max(bounds.size[2] * 0.001, 1e-4)
   let overhangFaces = 0
   for (let t = 0; t < triangleCount; t++) {
-    if (faceNormal(mesh, t)[2] < cosLimit) overhangFaces++
+    if (faceNormal(mesh, t)[2] >= cosLimit) continue
+    if (restsOnPlate(mesh, t, bounds.min[2], plateEpsilon)) continue
+    overhangFaces++
   }
   const overhangShare = triangleCount === 0 ? 0 : overhangFaces / triangleCount
   components.push({
