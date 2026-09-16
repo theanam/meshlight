@@ -50,24 +50,26 @@ export const NO_REPAIRS: RepairOptions = {
 
 type Listener = (state: State) => void
 
-/** The single app store (spec §7). Features read and write here rather than
- *  reaching into each other, so the rail, the panel and the viewport can
- *  never disagree about what is loaded. */
-/** Read once, so the plate's initial visibility can follow the bed the user
- *  picked last time rather than defaulting off every session. */
-const INITIAL_SETTINGS = loadSettings()
-
-class Store {
-  private state: State = {
+/** Built by a function, not by a module-level const, and deliberately so.
+ *  A const here would run before `SETTINGS_KEY` further down the file is
+ *  initialised, and loadSettings' catch — which exists for browsers that
+ *  refuse localStorage — would swallow the resulting ReferenceError and hand
+ *  back defaults, silently discarding every saved setting. A function
+ *  declaration is hoisted but not called until `new Store()` at the bottom,
+ *  by which point the whole module is ready. */
+function initialState(): State {
+  const settings = loadSettings()
+  return {
     mode: 'report',
     model: null,
     score: null,
-    settings: INITIAL_SETTINGS,
+    settings,
     fileName: null,
     shaded: true,
     showGrid: true,
     showBox: true,
-    showPlate: INITIAL_SETTINGS.platePreset !== 'none',
+    // Follow the bed picked last time rather than defaulting off every visit.
+    showPlate: settings.platePreset !== 'none',
     filter: 'all',
     selectedIssue: null,
     expandedIssue: null,
@@ -80,6 +82,13 @@ class Store {
     showRepair: true,
     repairBusy: false,
   }
+}
+
+/** The single app store (spec §7). Features read and write here rather
+ *  than reaching into each other, so the rail, the panel and the viewport
+ *  can never disagree about what is loaded. */
+class Store {
+  private state: State = initialState()
 
   private readonly listeners = new Set<Listener>()
 

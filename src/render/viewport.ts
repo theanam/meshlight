@@ -29,7 +29,8 @@ const GRID_MAJOR = 0x36435a
  *  so the bed reads as a surface and the ruler reads as drawn on top of it. */
 const PLATE_SURFACE = 0x223044
 const PLATE_EDGE = 0x7d93ad
-const PLATE_LABEL = '#7d8fa6'
+const PLATE_LABEL = '#8ba0b8'
+const PLATE_LABEL_DIM = '#61748c'
 const GRID_LABEL = '#5f6d82'
 
 /** The bounding box is a measuring aid, not part of the model. Every other
@@ -246,6 +247,7 @@ export class Viewport {
     // numbers in space do not say which is which.
     const V = THREE.Vector3
     this.addEdgeLabel(
+      this.boxGroup,
       `X ${fmtDim(sx)}`,
       new V(cx, y0 - gap, z0),
       new V(1, 0, 0),
@@ -253,6 +255,7 @@ export class Viewport {
       height,
     )
     this.addEdgeLabel(
+      this.boxGroup,
       `Y ${fmtDim(sy)}`,
       new V(x1 + gap, cy, z0),
       new V(0, 1, 0),
@@ -260,6 +263,7 @@ export class Viewport {
       height,
     )
     this.addEdgeLabel(
+      this.boxGroup,
       `Z ${fmtDim(sz)}`,
       new V(x0 - gap, y0, cz),
       new V(0, 0, 1),
@@ -280,32 +284,43 @@ export class Viewport {
    *  The trade is that text on a face turned away from you reads mirrored,
    *  which is the same trade a drawing makes. */
   private addEdgeLabel(
+    group: THREE.Group,
     text: string,
     centre: THREE.Vector3,
     along: THREE.Vector3,
     up: THREE.Vector3,
     height: number,
+    options: {
+      color?: string
+      /** Where `centre` sits along the text: 0 its start, 0.5 its middle, 1 its end. */
+      anchor?: number
+      /** Box annotations draw through the part; things lying on the plate
+       *  should be hidden by it like any other surface. */
+      depthTest?: boolean
+      renderOrder?: number
+    } = {},
   ): void {
-    const canvas = textCanvas(text, BOX_LABEL)
+    const canvas = textCanvas(text, options.color ?? BOX_LABEL)
     if (!canvas) return
 
+    const width = height * (canvas.width / canvas.height)
     const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(height * (canvas.width / canvas.height), height),
+      new THREE.PlaneGeometry(width, height),
       new THREE.MeshBasicMaterial({
         map: textTexture(canvas),
         transparent: true,
         depthWrite: false,
-        // Same layer as the box lines: the annotation reads as one overlay
-        // rather than half of it sinking into the part.
-        depthTest: false,
+        depthTest: options.depthTest ?? false,
         side: THREE.DoubleSide,
       }),
     )
     const facing = new THREE.Vector3().crossVectors(along, up)
     mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, up, facing))
-    mesh.position.copy(centre)
-    mesh.renderOrder = 2
-    this.boxGroup.add(mesh)
+    // The quad is built around its own middle, so any other anchor is a slide
+    // along the reading direction.
+    mesh.position.copy(centre).addScaledVector(along, (0.5 - (options.anchor ?? 0.5)) * width)
+    mesh.renderOrder = options.renderOrder ?? 2
+    group.add(mesh)
   }
 
   private clearBox(): void {
@@ -332,8 +347,8 @@ export class Viewport {
    *  A bare outline says "something is this big" and nothing else; the point
    *  of putting a bed under the part is to see the part standing on it. So
    *  this is a surface with a rounded edge, the inset line where a spring
-   *  steel sheet stops short of the bed, and the four corner fixings — the
-   *  details that make the eye read "printer bed" without a label.
+   *  steel sheet stops short of the bed, and the machine's name written on
+   *  it — the details that make the eye read "printer bed".
    *
    *  It answers "will this fit", which is a question about size and not about
    *  placement — the score asks it the same way, trying the part both ways
@@ -381,29 +396,36 @@ export class Viewport {
       0.3,
     )
 
-    const fixing = inset * 2.2
-    const screw = Math.min(bx, by) * 0.011
-    const ring = new THREE.EllipseCurve(0, 0, screw, screw, 0, Math.PI * 2, false, 0).getPoints(20)
-    for (const ox of [-1, 1]) {
-      for (const oy of [-1, 1]) {
-        this.addPlateLoop(ring, mx + ox * (bx / 2 - fixing), my + oy * (by / 2 - fixing), rim, 0.55)
-      }
-    }
-
-    // Say which bed this is. The size alone leaves you matching numbers
-    // against your printer's spec sheet.
+    // Write the machine on the bed, the way a slicer does. The name belongs
+    // to the surface, not to a tag floating beside it — and along the inside
+    // of an edge it stays clear of whatever is sitting on the plate.
+    //
     // Sized off the bed, not off the grid: the grid is scaled to the part, so
-    // a 40 mm bracket would set 2 mm text on a 220 mm plate.
-    const height = Math.max(bx, by) * 0.022
-    this.addLabel(
+    // a 40 mm bracket would otherwise set 2 mm text on a 220 mm plate.
+    const height = Math.max(bx, by) * 0.038
+    const margin = inset * 1.9
+    // Centred on each edge rather than tucked into a corner: the corners are
+    // where the fixings are, and lying flat costs a label enough size to
+    // foreshortening without it fighting a screw as well.
+    this.addEdgeLabel(
       this.plateGroup,
-      this.plateName
-        ? `${this.plateName} \u00b7 ${fmtMm(bx)} \u00d7 ${fmtMm(by)} mm`
-        : `${fmtMm(bx)} \u00d7 ${fmtMm(by)} mm plate`,
-      [mx - bx / 2, my - by / 2 - height * 0.6, z],
-      [0, 1],
+      this.plateName ?? 'Custom plate',
+      new THREE.Vector3(mx, my - by / 2 + margin, rim),
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(0, 1, 0),
       height,
-      PLATE_LABEL,
+      { color: PLATE_LABEL, depthTest: true, renderOrder: -1 },
+    )
+    // The volume runs up the right-hand edge, so the two never meet and each
+    // reads along the side it belongs to.
+    this.addEdgeLabel(
+      this.plateGroup,
+      `${fmtMm(bx)} \u00d7 ${fmtMm(by)} \u00d7 ${fmtMm(this.buildVolume[2])} mm`,
+      new THREE.Vector3(mx + bx / 2 - margin, my, rim),
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(-1, 0, 0),
+      height * 0.68,
+      { color: PLATE_LABEL_DIM, depthTest: true, renderOrder: -1 },
     )
   }
 
