@@ -26,13 +26,17 @@ const SECTION_LINE = 0x6fe3b0
 const GRID_MINOR = 0x1d2634
 const GRID_MAJOR = 0x36435a
 const GRID_PLATE = 0x4b5c77
-const GRID_LABEL = '#8d9aae'
-const GRID_LABEL_PLATE = '#6f8299'
+const GRID_LABEL = '#5f6d82'
+const GRID_LABEL_PLATE = '#55657c'
 
-/** The bounding box is a measuring aid, not part of the model, so it sits
- *  barely above the background — present when looked for, ignorable when not. */
-const BOX_LINE = 0x3f4c61
-const BOX_LABEL = '#aab7c9'
+/** The bounding box is a measuring aid, not part of the model. Every other
+ *  colour in this scene is cool — graphite ground, slate surface, blue-grey
+ *  grid — so a warm, heavily desaturated bronze is the one hue that separates
+ *  from all of it without being loud. It is nowhere near the saturated
+ *  red/orange/yellow the brand kit reserves for defects, and a perfect cuboid
+ *  wrapping the whole part could not be mistaken for one anyway. */
+const BOX_LINE = 0x9c8f7a
+const BOX_LABEL = '#c4b59b'
 
 /** Dihedral angle, in degrees, above which an edge counts as a real corner
  *  rather than tessellation of a curve. */
@@ -383,7 +387,10 @@ export class Viewport {
     // are all the same size" and you are left counting boxes and guessing what
     // one is worth; with them the plane reads as a ruler, in the same
     // millimetre coordinates the report quotes for every defect.
-    const textHeight = major * 0.3
+    // Small and quiet. These are a reference the eye should be able to find
+    // when it goes looking, not something it has to read past to see the
+    // part — at the previous size they sat on the model like a caption.
+    const textHeight = major * 0.2
     const gap = major * 0.12
     const majors = Math.floor(steps / perMajor)
     for (let m = -majors; m <= majors; m++) {
