@@ -1,0 +1,47 @@
+{
+  // Peacock tints this window with Meshlight's accent mint (--accent in
+  // src/styles/tokens.css) so it is tellable apart at a glance from other
+  // editor windows.
+  //
+  // peacock.color is the only line worth editing by hand. Peacock derives
+  // everything in workbench.colorCustomizations from it and rewrites the
+  // block whenever it runs, so changes made there are lost; to recolour this
+  // window, change peacock.color and run "Peacock: Apply Color to Workspace".
+  "peacock.color": "#146642",
+  // Peacock lightens the activity bar by default, which on a dark base makes
+  // it the brightest thing on screen and drops its text contrast to 3.2:1.
+  // Leaving all three alone keeps the chrome one flat, dark band.
+  "peacock.elementAdjustments": {
+    "activityBar": "none",
+    "statusBar": "none",
+    "titleBar": "none"
+  },
+  "workbench.colorCustomizations": {
+    "activityBar.activeBackground": "#146642",
+    "activityBar.background": "#146642",
+    "activityBar.foreground": "#e7e7e7",
+    "activityBar.inactiveForeground": "#e7e7e799",
+    "activityBarBadge.background": "#341050",
+    "activityBarBadge.foreground": "#e7e7e7",
+    "commandCenter.border": "#e7e7e799",
+    "sash.hoverBorder": "#146642",
+    "statusBar.background": "#146642",
+    "statusBar.foreground": "#e7e7e7",
+    "statusBarItem.hoverBackground": "#1c915e",
+    "statusBarItem.remoteBackground": "#341050",
+    "statusBarItem.remoteForeground": "#e7e7e7",
+    "titleBar.activeBackground": "#146642",
+    "titleBar.activeForeground": "#e7e7e7",
+    "titleBar.inactiveBackground": "#14664299",
+    "titleBar.inactiveForeground": "#e7e7e799",
+    "activityBar.activeBorder": "#e7e7e7",
+    "activityBarTop.activeBackground": "#146642",
+    "activityBarTop.activeBorder": "#e7e7e7",
+    "activityBarTop.background": "#146642",
+    "activityBarTop.foreground": "#e7e7e7",
+    "activityBarTop.inactiveForeground": "#e7e7e799",
+    "commandCenter.foreground": "#e7e7e7",
+    "statusBar.debuggingBackground": "#146642",
+    "statusBar.debuggingForeground": "#e7e7e7"
+  }
+}

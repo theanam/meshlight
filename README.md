@@ -9,7 +9,7 @@ actually print, and lets you cut through it to see the interior.
 Reads **STL** (binary and ascii), **OBJ**, **PLY** (ascii and both binary byte
 orders) and **3MF**.
 
-Your STL is not uploaded. There is no server to upload it to. The file is read
+Your mesh is not uploaded. There is no server to upload it to. The file is read
 in your browser tab and never leaves it, which is a property of how the app is
 built rather than a policy you have to take on trust.
 
@@ -37,7 +37,7 @@ tab and is never sent anywhere.
 | STL | Binary and ascii. Detected by size arithmetic (`84 + 50n`), not the `solid` keyword, which binary exporters also write |
 | OBJ | `v` and `f` only. Negative (relative) indices and n-gons handled; materials, normals and texture coordinates ignored |
 | PLY | ascii, `binary_little_endian` and `binary_big_endian`. Extra vertex properties (colour, confidence) are skipped over |
-| 3MF | ZIP container inflated with the platform's own `DecompressionStream` — no bundled inflate. Units converted to mm, build-item and component transforms applied |
+| 3MF | ZIP container inflated with the platform's own `DecompressionStream` — no bundled inflate. Handles ZIP64, the production extension (geometry in separate parts), namespace-prefixed elements, unit conversion to mm, and build-item and component transforms |
 
 Every format collapses to the same triangle soup in
 [`src/core/mesh-loader.ts`](src/core/mesh-loader.ts), so indexing, analysis,
@@ -47,6 +47,19 @@ means adding a parser and nothing else.
 The loader sniffs magic bytes before trusting the extension, so a PLY saved as
 `.stl` still opens correctly — the detected format is shown next to the
 triangle count.
+
+Two things about 3MF are worth knowing, because a reader that skips either
+opens almost nothing real:
+
+- **ZIP64 is not just for huge files.** Writers opt in regardless of size, so a
+  40 KB 3MF routinely stores `0xFFFFFFFF` sentinels in the ordinary
+  end-of-central-directory record and the true offsets in a ZIP64 record
+  behind it. Reading only the 32-bit fields finds no entries at all.
+- **The geometry is usually not in `3dmodel.model`.** Bambu Studio, Orca and
+  PrusaSlicer use the production extension: the root part is a few kilobytes
+  of build instructions, and every triangle lives in `3D/Objects/*.model`,
+  referenced by `p:path`. Those parts are followed and their object ids are
+  scoped per part, since two parts may each define object `1`.
 
 ## Features
 
@@ -128,6 +141,11 @@ lets mint onto the mesh — it reads as "added", never as a defect).
 
 `Repair & download STL` writes a binary STL with real facet normals straight to
 your downloads. The loaded mesh is never mutated; every repair runs on a copy.
+
+The export is always STL, whatever went in — an OBJ, PLY or 3MF comes back out
+as `name-fixed.stl`. STL is what every slicer takes, and the formats Meshlight
+reads carry things it deliberately drops on the way in (materials, colours,
+3MF's build metadata), so writing them back would mean writing them back wrong.
 
 **Not included: merging separate shells.** A true merge is a boolean union,
 which needs a CSG kernel well beyond what is here. Faking it — welding shells
@@ -211,9 +229,14 @@ parse -> index/weld -> adjacency -> analysis -> score
 - [`src/core/mesh-loader.ts`](src/core/mesh-loader.ts) — format sniffing and
   dispatch; the parsers themselves live in
   [`src/core/formats/`](src/core/formats/).
-- [`src/core/indexer.ts`](src/core/indexer.ts) — STL is a triangle soup with no
-  shared vertices, so corners are welded onto an epsilon grid before any
-  topology question can be asked.
+- [`src/core/indexer.ts`](src/core/indexer.ts) — every format arrives as a
+  triangle soup, so corners are welded onto an epsilon grid before any topology
+  question can be asked. STL has no shared vertices to begin with; OBJ, PLY and
+  3MF do, but the loader flattens them anyway and lets welding rebuild the
+  sharing. That is deliberate: a file's own indices say who the author grouped,
+  not which corners actually meet, and two faces written a hair apart are a
+  hole to a printer no matter what the index buffer claims. The cost is that an
+  intentional seam welds shut if it is tighter than the epsilon.
 - [`src/core/adjacency.ts`](src/core/adjacency.ts) — the edge map is built once
   and reused by every check that follows.
 - [`src/core/analysis.ts`](src/core/analysis.ts) — shell discovery and winding

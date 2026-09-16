@@ -474,6 +474,7 @@ console.log('\nformat sniffing beats the extension')
 async function toZip(
   entries: { name: string; text: string }[],
   deflate: boolean,
+  zip64 = false,
 ): Promise<ArrayBuffer> {
   const encoder = new TextEncoder()
   const locals: Uint8Array[] = []
@@ -502,33 +503,68 @@ async function toZip(
     local.set(data, 30 + nameBytes.length)
     locals.push(local)
 
-    const central = new Uint8Array(46 + nameBytes.length)
+    // ZIP64 puts 0xFFFFFFFF in the 32-bit fields and the real values in an
+    // extra block — which is what plenty of small real-world 3MF files do.
+    const extraLength = zip64 ? 28 : 0
+    const central = new Uint8Array(46 + nameBytes.length + extraLength)
     const cv = new DataView(central.buffer)
     cv.setUint32(0, 0x02014b50, true)
     cv.setUint16(10, deflate ? 8 : 0, true)
-    cv.setUint32(20, data.length, true)
-    cv.setUint32(24, rawBytes.length, true)
+    cv.setUint32(20, zip64 ? 0xffffffff : data.length, true)
+    cv.setUint32(24, zip64 ? 0xffffffff : rawBytes.length, true)
     cv.setUint16(28, nameBytes.length, true)
-    cv.setUint32(42, offset, true)
+    cv.setUint16(30, extraLength, true)
+    cv.setUint32(42, zip64 ? 0xffffffff : offset, true)
     central.set(nameBytes, 46)
+    if (zip64) {
+      const ev2 = new DataView(central.buffer, 46 + nameBytes.length)
+      ev2.setUint16(0, 0x0001, true)
+      ev2.setUint16(2, 24, true)
+      ev2.setBigUint64(4, BigInt(rawBytes.length), true)
+      ev2.setBigUint64(12, BigInt(data.length), true)
+      ev2.setBigUint64(20, BigInt(offset), true)
+    }
     centrals.push(central)
 
     offset += local.length
   }
 
   const centralSize = centrals.reduce((n, c) => n + c.length, 0)
+  const tail: Uint8Array[] = []
+
+  if (zip64) {
+    const record = new Uint8Array(56)
+    const rv = new DataView(record.buffer)
+    rv.setUint32(0, 0x06064b50, true)
+    rv.setBigUint64(4, 44n, true)
+    rv.setBigUint64(24, BigInt(entries.length), true)
+    rv.setBigUint64(32, BigInt(entries.length), true)
+    rv.setBigUint64(40, BigInt(centralSize), true)
+    rv.setBigUint64(48, BigInt(offset), true)
+    tail.push(record)
+
+    const locator = new Uint8Array(20)
+    const lv2 = new DataView(locator.buffer)
+    lv2.setUint32(0, 0x07064b50, true)
+    lv2.setBigUint64(8, BigInt(offset + centralSize), true)
+    lv2.setUint32(16, 1, true)
+    tail.push(locator)
+  }
+
   const eocd = new Uint8Array(22)
   const ev = new DataView(eocd.buffer)
   ev.setUint32(0, 0x06054b50, true)
-  ev.setUint16(8, entries.length, true)
-  ev.setUint16(10, entries.length, true)
+  ev.setUint16(8, zip64 ? 0xffff : entries.length, true)
+  ev.setUint16(10, zip64 ? 0xffff : entries.length, true)
   ev.setUint32(12, centralSize, true)
-  ev.setUint32(16, offset, true)
+  ev.setUint32(16, zip64 ? 0xffffffff : offset, true)
+  tail.push(eocd)
 
-  const total = offset + centralSize + 22
+  const parts = [...locals, ...centrals, ...tail]
+  const total = parts.reduce((n, p) => n + p.length, 0)
   const out = new Uint8Array(total)
   let cursor = 0
-  for (const part of [...locals, ...centrals, eocd]) { out.set(part, cursor); cursor += part.length }
+  for (const part of parts) { out.set(part, cursor); cursor += part.length }
   return out.buffer as ArrayBuffer
 }
 
@@ -613,6 +649,63 @@ console.log('\n3MF sniffed without an extension')
   const zip = await toZip([{ name: '3D/3dmodel.model', text: modelXml(cubeTriangles()) }], true)
   const raw = await parseMesh(zip, 'no-extension')
   check('recognised from its ZIP magic', raw.format, '3MF')
+}
+
+console.log('\n3MF in a ZIP64 archive')
+{
+  // Real 3MF writers opt into ZIP64 regardless of size, so the ordinary
+  // end-of-central-directory holds sentinels and the real offsets live in a
+  // ZIP64 record behind it. Reading only the 32-bit fields finds no entries.
+  const zip = await toZip([
+    { name: '[Content_Types].xml', text: '<Types/>' },
+    { name: '3D/3dmodel.model', text: modelXml(cubeTriangles()) },
+  ], true, true)
+  const mesh = indexMesh(await parseMesh(zip, 'zip64.3mf'), DEFAULT_SETTINGS.weldEpsilon)
+  check('12 triangles', mesh.triangleCount, 12)
+  check('watertight', analyseMesh(mesh).watertight, true)
+}
+
+console.log('\n3MF production extension (geometry in a separate part)')
+{
+  // Bambu, Orca and PrusaSlicer write a few kilobytes of build instructions
+  // into 3D/3dmodel.model and put every triangle in 3D/Objects/*.model.
+  const root = `<?xml version="1.0"?>
+<model unit="millimeter">
+ <resources>
+  <object id="1" type="model">
+   <components><component objectid="7" p:path="/3D/Objects/part.model" /></components>
+  </object>
+ </resources>
+ <build><item objectid="1" /></build>
+</model>`
+  const part = `<?xml version="1.0"?>
+<model unit="millimeter"><resources>${modelXml(cubeTriangles()).replace(/[\s\S]*<resources>/, '').replace(/<\/resources>[\s\S]*/, '')}</resources></model>`
+    .replace('id="1"', 'id="7"')
+
+  const zip = await toZip([
+    { name: '_rels/.rels', text: '<Relationships><Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/3dmodel.model" /></Relationships>' },
+    { name: '3D/3dmodel.model', text: root },
+    { name: '3D/Objects/part.model', text: part },
+  ], true, true)
+
+  const mesh = indexMesh(await parseMesh(zip, 'production.3mf'), DEFAULT_SETTINGS.weldEpsilon)
+  check('geometry pulled from the referenced part', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', analyseMesh(mesh).watertight, true)
+}
+
+console.log('\n3MF with namespace-prefixed elements')
+{
+  const xml = modelXml(cubeTriangles())
+    .replace(/<vertex /g, '<m:vertex ')
+    .replace(/<triangle /g, '<m:triangle ')
+    .replace(/<object /g, '<m:object ').replace(/<\/object>/g, '</m:object>')
+    .replace(/<build>/g, '<m:build>').replace(/<\/build>/g, '</m:build>')
+    .replace(/<item /g, '<m:item ')
+  const zip = await toZip([{ name: '3D/3dmodel.model', text: xml }], true)
+  const mesh = indexMesh(await parseMesh(zip, 'prefixed.3mf'), DEFAULT_SETTINGS.weldEpsilon)
+  check('prefixes ignored', mesh.triangleCount, 12)
+  check('watertight', analyseMesh(mesh).watertight, true)
 }
 
 console.log('\nmalformed input')

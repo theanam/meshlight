@@ -1,5 +1,6 @@
 import { MeshParseError, SoupBuilder } from './errors'
-import { readZipEntry } from './zip'
+import { readZip } from './zip'
+import type { ZipEntry } from './zip'
 import type { RawMesh } from '../types'
 
 /** 3MF states its own units; Meshlight works in millimetres throughout. */
@@ -49,11 +50,11 @@ function parseMatrix(value: string | undefined): Matrix {
 /** Pull the attributes off every occurrence of one tag.
  *
  *  DOMParser does not exist in a Web Worker, and 3MF's model XML is
- *  machine-generated and flat, so a tag scanner is enough. It reads
- *  attributes only — no namespaces, no entity decoding — which is fine
- *  because everything we need is a number or an id. */
+ *  machine-generated and flat, so a tag scanner is enough. Element names may
+ *  carry a namespace prefix, so one is allowed for and ignored; attribute
+ *  names keep theirs and are looked up by local name. */
 function* tags(xml: string, name: string): Generator<Record<string, string>> {
-  const re = new RegExp(`<${name}\\b([^>]*)>`, 'g')
+  const re = new RegExp(`<(?:[\\w.-]+:)?${name}\\b([^>]*)>`, 'g')
   const attr = /([\w:.-]+)\s*=\s*"([^"]*)"/g
   let match: RegExpExecArray | null
   while ((match = re.exec(xml)) !== null) {
@@ -65,24 +66,64 @@ function* tags(xml: string, name: string): Generator<Record<string, string>> {
   }
 }
 
+/** Attribute lookup that ignores any namespace prefix, so `p:path` and
+ *  `path` both resolve. The production extension's attributes are prefixed
+ *  and the prefix is chosen by the writer. */
+function attr(record: Record<string, string>, localName: string): string | undefined {
+  const direct = record[localName]
+  if (direct !== undefined) return direct
+  for (const key of Object.keys(record)) {
+    if (key.endsWith(`:${localName}`)) return record[key]
+  }
+  return undefined
+}
+
 interface ObjectDef {
   vertices: number[]
   triangles: number[]
-  components: { objectid: string; transform: Matrix }[]
+  components: { key: string; transform: Matrix }[]
 }
 
-export async function parse3mf(buffer: ArrayBuffer): Promise<RawMesh> {
-  const entry = await readZipEntry(buffer, (name) => /3dmodel\.model$/i.test(name))
-  if (!entry) throw new MeshParseError('No 3D model found inside this 3MF file.')
-  const xml = new TextDecoder().decode(entry.data)
+/** Objects are numbered per model part, so a part's own path scopes its ids.
+ *  Without this, two parts that both define object "1" collide. */
+function objectKey(path: string, id: string): string {
+  return `${path}#${id}`
+}
 
-  const model = tags(xml, 'model').next().value as Record<string, string> | undefined
-  const scale = UNIT_TO_MM[model?.unit ?? 'millimeter'] ?? 1
+/** Resolve a `p:path` against the archive root the way OPC does. */
+function normalisePath(path: string): string {
+  return path.replace(/^\/+/, '')
+}
 
-  // Split on object boundaries so each object's vertices and triangles are
-  // read from its own block rather than the whole document.
-  const objects = new Map<string, ObjectDef>()
-  const objectRe = /<object\b([^>]*)>([\s\S]*?)<\/object>/g
+/** Find the model part the build lives in.
+ *
+ *  The package relationships name it, but writers disagree on casing and
+ *  path, so fall back to the conventional location and then to any part that
+ *  looks like a model. */
+async function rootModelPath(entries: ZipEntry[]): Promise<string | null> {
+  const rels = entries.find((e) => /^_rels\/\.rels$/i.test(e.name))
+  if (rels) {
+    const xml = new TextDecoder().decode(await rels.read())
+    for (const relationship of tags(xml, 'Relationship')) {
+      const type = attr(relationship, 'Type') ?? ''
+      const target = attr(relationship, 'Target')
+      if (target && /3dmodel/i.test(type)) {
+        const wanted = normalisePath(target).toLowerCase()
+        const match = entries.find((e) => e.name.toLowerCase() === wanted)
+        if (match) return match.name
+      }
+    }
+  }
+  return (
+    entries.find((e) => /^3d\/3dmodel\.model$/i.test(e.name))?.name ??
+    entries.find((e) => /\.model$/i.test(e.name))?.name ??
+    null
+  )
+}
+
+/** Read one model part's objects into the map, keyed by part path. */
+function collectObjects(xml: string, path: string, into: Map<string, ObjectDef>, scale: number): void {
+  const objectRe = /<(?:[\w.-]+:)?object\b([^>]*)>([\s\S]*?)<\/(?:[\w.-]+:)?object>/g
   let match: RegExpExecArray | null
   while ((match = objectRe.exec(xml)) !== null) {
     const header = match[1] ?? ''
@@ -98,18 +139,62 @@ export async function parse3mf(buffer: ArrayBuffer): Promise<RawMesh> {
       def.triangles.push(Number(t.v1), Number(t.v2), Number(t.v3))
     }
     for (const c of tags(body, 'component')) {
-      if (c.objectid) def.components.push({ objectid: c.objectid, transform: parseMatrix(c.transform) })
+      const objectid = attr(c, 'objectid')
+      if (!objectid) continue
+      // The production extension puts a referenced object in another part.
+      const external = attr(c, 'path')
+      def.components.push({
+        key: objectKey(external ? normalisePath(external) : path, objectid),
+        transform: parseMatrix(attr(c, 'transform')),
+      })
     }
-    objects.set(id, def)
+    into.set(objectKey(path, id), def)
+  }
+}
+
+export async function parse3mf(buffer: ArrayBuffer): Promise<RawMesh> {
+  const entries = readZip(buffer)
+  const rootPath = await rootModelPath(entries)
+  if (!rootPath) throw new MeshParseError('No 3D model found inside this 3MF file.')
+
+  const byName = new Map(entries.map((e) => [e.name.toLowerCase(), e]))
+  const rootXml = new TextDecoder().decode(await byName.get(rootPath.toLowerCase())!.read())
+
+  const model = tags(rootXml, 'model').next().value as Record<string, string> | undefined
+  const unit = attr(model ?? {}, 'unit') ?? 'millimeter'
+  const scale = UNIT_TO_MM[unit] ?? 1
+
+  const objects = new Map<string, ObjectDef>()
+  collectObjects(rootXml, rootPath, objects, scale)
+
+  // Load referenced parts on demand. Bambu, Orca and PrusaSlicer all use the
+  // production extension, where the root model is a few kilobytes of build
+  // instructions and every triangle lives in 3D/Objects/*.model.
+  const loaded = new Set([rootPath.toLowerCase()])
+  for (let pass = 0; pass < 16; pass++) {
+    const missing = new Set<string>()
+    for (const def of objects.values()) {
+      for (const component of def.components) {
+        const path = component.key.slice(0, component.key.lastIndexOf('#'))
+        if (!objects.has(component.key) && !loaded.has(path.toLowerCase())) missing.add(path)
+      }
+    }
+    if (missing.size === 0) break
+    for (const path of missing) {
+      loaded.add(path.toLowerCase())
+      const entry = byName.get(path.toLowerCase())
+      if (!entry) continue
+      collectObjects(new TextDecoder().decode(await entry.read()), path, objects, scale)
+    }
   }
 
   if (objects.size === 0) throw new MeshParseError('This 3MF contains no objects.')
 
   const soup = new SoupBuilder()
-  const emit = (id: string, transform: Matrix, depth: number): void => {
+  const emit = (key: string, transform: Matrix, depth: number): void => {
     // Components can nest, and a malformed file could make them cycle.
     if (depth > 16) return
-    const def = objects.get(id)
+    const def = objects.get(key)
     if (!def) return
 
     for (let t = 0; t + 2 < def.triangles.length; t += 3) {
@@ -138,24 +223,30 @@ export async function parse3mf(buffer: ArrayBuffer): Promise<RawMesh> {
     }
 
     for (const component of def.components) {
-      emit(component.objectid, multiply(component.transform, transform), depth + 1)
+      emit(component.key, multiply(component.transform, transform), depth + 1)
     }
   }
 
   // The build section says what actually gets printed, and where.
   let built = 0
-  const buildBlock = /<build\b[^>]*>([\s\S]*?)<\/build>/.exec(xml)?.[1] ?? ''
+  const buildBlock = /<(?:[\w.-]+:)?build\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?build>/.exec(rootXml)?.[1] ?? ''
   for (const item of tags(buildBlock, 'item')) {
-    if (!item.objectid) continue
-    emit(item.objectid, parseMatrix(item.transform), 0)
+    const objectid = attr(item, 'objectid')
+    if (!objectid) continue
+    const external = attr(item, 'path')
+    emit(
+      objectKey(external ? normalisePath(external) : rootPath, objectid),
+      parseMatrix(attr(item, 'transform')),
+      0,
+    )
     built++
   }
 
   // Some exporters omit the build section entirely; fall back to every object
   // that carries geometry of its own.
   if (built === 0) {
-    for (const [id, def] of objects) {
-      if (def.triangles.length > 0) emit(id, IDENTITY, 0)
+    for (const [key, def] of objects) {
+      if (def.triangles.length > 0) emit(key, IDENTITY, 0)
     }
   }
 
@@ -167,6 +258,6 @@ export async function parse3mf(buffer: ArrayBuffer): Promise<RawMesh> {
     positions: soup.positions(),
     fileNormals: new Float32Array(soup.triangleCount * 3),
     triangleCount: soup.triangleCount,
-    format: model?.unit && model.unit !== 'millimeter' ? `3MF (${model.unit})` : '3MF',
+    format: unit !== 'millimeter' ? `3MF (${unit})` : '3MF',
   }
 }
