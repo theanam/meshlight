@@ -25,7 +25,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # enablement turns Pages on and points it at this workflow using the
+      # job's own token, so the repository needs no manual settings change.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
