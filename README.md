@@ -6,16 +6,24 @@ Drop in an STL and Meshlight checks it for the things that ruin a print — hole
 non-manifold edges, flipped normals, loose shells — scores how well it will
 actually print, and lets you cut through it to see the interior.
 
-Nothing is uploaded. There is no server to upload to. The file is read in your
-browser tab and never leaves it, which is a property of how the app is built
-rather than a policy you have to take on trust.
+Your STL is not uploaded. There is no server to upload it to. The file is read
+in your browser tab and never leaves it, which is a property of how the app is
+built rather than a policy you have to take on trust.
 
 **[meshlight.org](https://meshlight.org)**
 
 - **Free and open source** (MIT)
-- **100% client-side** — no backend, no accounts, no data collection
+- **100% client-side** — no backend, no accounts, and your mesh never leaves the tab
 - **Works offline** — after one visit it runs with the network off for good
 - Hosted as a static site on GitHub Pages
+
+One exception, stated plainly because the rest of this page makes a strong
+claim: **meshlight.org loads Google Analytics** and counts page views. It is
+injected into the deployed build only and runs only on that hostname, so
+`npm run dev`, a local build, and any fork or self-host carry no analytics at
+all — see `analytics()` in [`vite.config.ts`](vite.config.ts). It sees a page
+view. It never sees your file, which is parsed and analysed entirely in the
+tab and is never sent anywhere.
 
 ---
 
@@ -210,8 +218,14 @@ production build always opens on the drop screen.
 
 ### The offline guarantee
 
-The build makes **no runtime network requests of any kind**. Three.js is bundled
-and both typefaces are self-hosted, so there is no CDN in the loop.
+The app makes **no runtime network requests of its own**. Three.js is bundled and
+both typefaces are self-hosted, so there is no CDN in the loop and nothing to
+fetch once the tab is open.
+
+The analytics tag on meshlight.org is the one request that leaves, and it is
+outside this guarantee by construction: it is not precached, the service worker
+ignores cross-origin requests entirely, and it fails silently with the network
+off. Offline behaviour is identical with it and without it.
 
 The service worker is generated at build time by a plugin in
 [`vite.config.ts`](vite.config.ts) that precaches the real content-hashed output.

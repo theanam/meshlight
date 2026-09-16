@@ -46,12 +46,54 @@ function serviceWorker(): Plugin {
   }
 }
 
+/** Google Analytics, on the deployed site and nowhere else.
+ *
+ *  Two gates, because "the deployed site" needs both. `apply: 'build'` keeps
+ *  the tag out of `npm run dev`, so it is never in the page you develop
+ *  against. The hostname check then keeps it out of every build that is not
+ *  ours: this is MIT-licensed, and without it a fork or a self-host would
+ *  report visitors into an analytics property they do not own and cannot
+ *  switch off. */
+const ANALYTICS_ID = 'G-MY66HP88S4'
+const ANALYTICS_HOSTS = ['meshlight.org', 'www.meshlight.org', 'theanam.github.io']
+
+function analytics(): Plugin {
+  return {
+    name: 'meshlight-analytics',
+    apply: 'build',
+    transformIndexHtml() {
+      return [
+        {
+          tag: 'script',
+          injectTo: 'head',
+          // The standard gtag snippet, with the loader appended from script so
+          // that a host outside the list fetches nothing at all — a plain
+          // `<script src>` would hit Google before any guard could run.
+          children: `
+(function () {
+  if (${JSON.stringify(ANALYTICS_HOSTS)}.indexOf(location.hostname) === -1) return
+  var tag = document.createElement('script')
+  tag.async = true
+  tag.src = 'https://www.googletagmanager.com/gtag/js?id=${ANALYTICS_ID}'
+  document.head.appendChild(tag)
+  window.dataLayer = window.dataLayer || []
+  function gtag() { dataLayer.push(arguments) }
+  window.gtag = gtag
+  gtag('js', new Date())
+  gtag('config', '${ANALYTICS_ID}')
+})()`,
+        },
+      ]
+    },
+  }
+}
+
 // base is '' so every asset is referenced relatively: the same build serves
 // from the custom domain at the root (meshlight.org) and from a GitHub Pages
 // project sub-path (user.github.io/meshlight/), with nothing hardcoded.
 export default defineConfig({
   base: '',
-  plugins: [serviceWorker()],
+  plugins: [analytics(), serviceWorker()],
   build: {
     target: 'es2022',
     // Spec §4 hard constraint: nothing may be fetched at runtime, so every
