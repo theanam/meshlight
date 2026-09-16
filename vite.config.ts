@@ -94,6 +94,10 @@ function analytics(): Plugin {
 export default defineConfig({
   base: '',
   plugins: [analytics(), serviceWorker()],
+  // strictPort so a port clash fails loudly. Vite's default is to walk up to
+  // the next free port, which would quietly hand you 5176 and leave anything
+  // pointed at 5175 talking to nothing.
+  server: { port: 5175, strictPort: true },
   build: {
     target: 'es2022',
     // Spec §4 hard constraint: nothing may be fetched at runtime, so every
