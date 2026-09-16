@@ -1,0 +1,13 @@
+{
+  "name": "Meshlight",
+  "short_name": "Meshlight",
+  "description": "Offline STL mesh inspector — errors, printability score, slice viewer.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#07090D",
+  "theme_color": "#07090D",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

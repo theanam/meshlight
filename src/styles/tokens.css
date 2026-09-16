@@ -1,0 +1,79 @@
+/* Meshlight design tokens — extracted verbatim from the brand kit artboard
+   "1a Brand kit" in design/Meshlight Brand & UI.dc.html.
+   Change a value here, not in a component. */
+
+:root {
+  /* ---- Palette: cool graphite ---------------------------------------- */
+  --void: #07090D;      /* page behind everything */
+  --surface: #0B0F16;   /* panels, rails, cards */
+  --chrome: #0D131C;    /* rail + header, one step above surface */
+  --raised: #18202C;    /* active rail item, hovered control */
+  --row-active: #111825;/* selected list row */
+
+  --ink: #E6EBF2;       /* primary text */
+  --ink-dim: #C3CCDA;   /* secondary text, inactive headings */
+  --ink-muted: #8D9AAE; /* captions, units, metadata */
+  --ink-faint: #5C6A7E; /* token labels, disabled */
+
+  --accent: #6FE3B0;    /* interface only — never painted on the mesh */
+  --accent-hover: #9CF0CC;
+
+  /* ---- Defect colors -------------------------------------------------
+     These three are reserved for geometry. Per the brand kit: accent mint
+     never appears on the mesh, so red/orange/yellow always mean "problem". */
+  --defect-nonmanifold: #FF5C5C;
+  --defect-flipped: #FF9F45;
+  --defect-degenerate: #F5D547;
+
+  /* ---- Shell isolation -------------------------------------------------
+     Separate shells are a note, not a defect, so they must not borrow one of
+     the three problem colours. Mint is out too: the brand kit reserves it for
+     the interface. A cool indigo sits inside the graphite family, reads as
+     "this one" rather than "this is wrong", and is unmistakable against the
+     warm defect set. */
+  --shell-select: #8C9EFF;
+  /* Everything that is not the selected shell drops back to this. */
+  --shell-dim: #3A4655;
+
+  /* ---- Lines ---------------------------------------------------------- */
+  --line: #1B2230;         /* standard panel divider */
+  --line-strong: #202836;  /* artboard / outer edge */
+  --line-subtle: #141A24;  /* between list rows */
+  --line-control: #232C3A; /* secondary button border */
+  --line-error: #3A2A2E;   /* error-tinted pill border */
+
+  /* ---- Scrims (panels floating over the 3D viewport) ------------------ */
+  --scrim: #0B0F16D9;
+  --scrim-strong: #0B0F16E6;
+
+  /* ---- Viewport backdrop --------------------------------------------- */
+  --viewport-bg: radial-gradient(70% 70% at 45% 45%, #141D29 0%, #090C12 100%);
+
+  /* ---- Type ----------------------------------------------------------
+     Space Grotesk carries the interface. JetBrains Mono carries every
+     measurement, count and label — the brand kit is explicit about this. */
+  --font-ui: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 19px;
+  --text-score: 42px;
+
+  --tracking-label: 0.12em;
+  --tracking-tight: -0.01em;
+
+  /* ---- Shape ---------------------------------------------------------- */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* ---- Metrics from the layout artboards ------------------------------ */
+  --rail-w: 88px;
+  --panel-w: 372px;
+}

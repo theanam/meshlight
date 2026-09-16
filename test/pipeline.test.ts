@@ -1,0 +1,361 @@
+/* Exercises the pure pipeline (parse -> index -> analyse -> score -> slice)
+ * on hand-built meshes whose correct answers are known by construction.
+ * Run with: npm test */
+
+import { analyseMesh } from '../src/core/analysis'
+import { indexMesh } from '../src/core/indexer'
+import { scoreMesh } from '../src/core/score'
+import { buildZBuckets, sectionAt } from '../src/core/section'
+// Aliased: this file has its own toBinaryStl fixture helper.
+import { repairMesh, toBinaryStl as exportStl } from '../src/core/repair'
+import { StlParseError, parseStl } from '../src/core/stl-parser'
+import { DEFAULT_SETTINGS, MAX_INSTANCES } from '../src/core/types'
+
+let failures = 0
+let checks = 0
+
+function check(label: string, actual: unknown, expected: unknown): void {
+  checks++
+  const ok = JSON.stringify(actual) === JSON.stringify(expected)
+  if (!ok) {
+    failures++
+    console.error(`  FAIL ${label}\n       expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+  } else {
+    console.log(`  ok   ${label}`)
+  }
+}
+
+/** The 12 triangles of a unit cube, wound counter-clockwise seen from
+ *  outside, as [ax,ay,az, bx,by,bz, cx,cy,cz] per face. */
+function cubeTriangles(size = 10): number[][] {
+  const s = size
+  const v = [
+    [0, 0, 0], [s, 0, 0], [s, s, 0], [0, s, 0],
+    [0, 0, s], [s, 0, s], [s, s, s], [0, s, s],
+  ]
+  const quads: [number, number, number, number][] = [
+    [0, 3, 2, 1], // bottom (-Z)
+    [4, 5, 6, 7], // top (+Z)
+    [0, 1, 5, 4], // -Y
+    [1, 2, 6, 5], // +X
+    [2, 3, 7, 6], // +Y
+    [3, 0, 4, 7], // -X
+  ]
+  const faces: number[][] = []
+  for (const [a, b, c, d] of quads) {
+    faces.push([...v[a]!, ...v[b]!, ...v[c]!])
+    faces.push([...v[a]!, ...v[c]!, ...v[d]!])
+  }
+  return faces
+}
+
+function toBinaryStl(faces: number[][]): ArrayBuffer {
+  const buffer = new ArrayBuffer(84 + faces.length * 50)
+  const view = new DataView(buffer)
+  view.setUint32(80, faces.length, true)
+  let offset = 84
+  for (const face of faces) {
+    // Leave the file normal at zero — we recompute from winding anyway.
+    for (let i = 0; i < 9; i++) view.setFloat32(offset + 12 + i * 4, face[i]!, true)
+    offset += 50
+  }
+  return buffer
+}
+
+function toAsciiStl(faces: number[][]): ArrayBuffer {
+  let text = 'solid test\n'
+  for (const f of faces) {
+    text += 'facet normal 0 0 0\n  outer loop\n'
+    for (let c = 0; c < 3; c++) text += `    vertex ${f[c * 3]} ${f[c * 3 + 1]} ${f[c * 3 + 2]}\n`
+    text += '  endloop\nendfacet\n'
+  }
+  text += 'endsolid test\n'
+  return new TextEncoder().encode(text).buffer as ArrayBuffer
+}
+
+function pipeline(faces: number[][], binary = true) {
+  const raw = parseStl(binary ? toBinaryStl(faces) : toAsciiStl(faces))
+  const mesh = indexMesh(raw, DEFAULT_SETTINGS.weldEpsilon)
+  const analysis = analyseMesh(mesh)
+  const buckets = buildZBuckets(mesh)
+  return { raw, mesh, analysis, buckets }
+}
+
+console.log('\nclean cube (binary)')
+{
+  const { raw, mesh, analysis } = pipeline(cubeTriangles())
+  check('format detected', raw.format, 'binary')
+  check('12 triangles', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', analysis.watertight, true)
+  check('no boundary edges', analysis.boundaryEdges.length, 0)
+  check('no non-manifold edges', analysis.nonManifoldEdges.length, 0)
+  check('no flipped faces', analysis.flippedTriangles.length, 0)
+  check('no degenerate faces', analysis.degenerateTriangles.length, 0)
+  check('single shell', analysis.shells.length, 1)
+  check('positive volume', analysis.shells[0]!.signedVolume > 0, true)
+  check('no issues reported', analysis.issues.length, 0)
+}
+
+console.log('\nclean cube (ascii)')
+{
+  const { raw, mesh, analysis } = pipeline(cubeTriangles(), false)
+  check('format detected', raw.format, 'ascii')
+  check('12 triangles', mesh.triangleCount, 12)
+  check('welds to 8 vertices', mesh.vertexCount, 8)
+  check('watertight', analysis.watertight, true)
+}
+
+console.log('\ncube with one face removed (a hole)')
+{
+  const faces = cubeTriangles()
+  faces.splice(2, 1) // drop half of the top face
+  const { analysis } = pipeline(faces)
+  check('not watertight', analysis.watertight, false)
+  check('3 boundary edges', analysis.boundaryEdges.length, 3)
+  check('reports a boundary issue', analysis.issues[0]!.kind, 'boundary')
+}
+
+console.log('\ncube with one face wound backwards')
+{
+  const faces = cubeTriangles()
+  const f = faces[5]!
+  // Swap corners b and c to reverse the winding of a single face.
+  faces[5] = [f[0]!, f[1]!, f[2]!, f[6]!, f[7]!, f[8]!, f[3]!, f[4]!, f[5]!]
+  const { analysis } = pipeline(faces)
+  check('one flipped face', analysis.flippedTriangles.length, 1)
+  check('still watertight', analysis.watertight, true)
+}
+
+console.log('\nfully inverted cube')
+{
+  // Reverse every face: the solid is closed but points inward.
+  const faces = cubeTriangles().map((f) => [
+    f[0]!, f[1]!, f[2]!, f[6]!, f[7]!, f[8]!, f[3]!, f[4]!, f[5]!,
+  ])
+  const { analysis } = pipeline(faces)
+  check('negative volume', analysis.shells[0]!.signedVolume < 0, true)
+  check('every face flagged flipped', analysis.flippedTriangles.length, 12)
+}
+
+console.log('\ntwo disconnected cubes')
+{
+  const faces = [
+    ...cubeTriangles(10),
+    ...cubeTriangles(10).map((f) => f.map((n, i) => (i % 3 === 0 ? n + 40 : n))),
+  ]
+  const { analysis } = pipeline(faces)
+  check('two shells', analysis.shells.length, 2)
+  check('watertight overall', analysis.watertight, true)
+  check('reports a shells note', analysis.issues.some((i) => i.kind === 'shells'), true)
+}
+
+console.log('\ndegenerate face')
+{
+  const faces = cubeTriangles()
+  faces.push([0, 0, 0, 5, 0, 0, 10, 0, 0]) // three collinear points: zero area
+  const { analysis } = pipeline(faces)
+  check('one degenerate face', analysis.degenerateTriangles.length, 1)
+}
+
+console.log('\nnon-manifold edge (three faces on one edge)')
+{
+  const faces = cubeTriangles()
+  faces.push([0, 0, 0, 10, 0, 0, 5, -8, 5]) // a fin sharing the cube's bottom edge
+  const { analysis } = pipeline(faces)
+  check('one non-manifold edge', analysis.nonManifoldEdges.length, 1)
+  check('not watertight', analysis.watertight, false)
+}
+
+console.log('\nslicing a cube')
+{
+  const { mesh, buckets } = pipeline(cubeTriangles(10))
+  const mid = sectionAt(mesh, buckets, 5)
+  check('mid-height slice returns segments', mid.length > 0, true)
+  // A cube cut halfway up is a square: 4 sides, 2 triangles each.
+  check('segment count matches the cut faces', mid.length / 4, 8)
+  const above = sectionAt(mesh, buckets, 999)
+  check('slice above the model is empty', above.length, 0)
+}
+
+console.log('\nscoring')
+{
+  const { mesh, analysis, buckets } = pipeline(cubeTriangles(10))
+  const score = scoreMesh(mesh, analysis, buckets, DEFAULT_SETTINGS)
+  check('five components', score.components.length, 5)
+  check('watertight component passes', score.components[0]!.status, 'pass')
+  check('score in range', score.total >= 0 && score.total <= 100, true)
+  check('clean cube scores well', score.total >= 70, true)
+
+  const tiny = scoreMesh(mesh, analysis, buckets, { ...DEFAULT_SETTINGS, buildVolume: [5, 5, 5] })
+  check('oversized part loses build-volume points', tiny.components[4]!.status, 'fail')
+}
+
+console.log('\nper-defect instances')
+{
+  const faces = cubeTriangles()
+  faces.splice(2, 1)
+  const { analysis } = pipeline(faces)
+  const boundary = analysis.issues.find((i) => i.kind === 'boundary')!
+  check('one instance per open edge', boundary.instances.length, 3)
+  check('nothing hidden below the cap', boundary.hiddenInstances, 0)
+  check('every instance has a focus point', boundary.instances.every((i) => i.focus.length === 3), true)
+  check('every instance has a positive radius', boundary.instances.every((i) => i.radius > 0), true)
+  // The camera distance derives from radius, so a zero would fly it inside.
+  // meta is rounded for display, so compare against it loosely.
+  const shown = Number(boundary.instances[0]!.meta.split(' ')[0])
+  check('edge radius is half its length', Math.abs(shown / 2 - boundary.instances[0]!.radius) < 0.01, true)
+}
+
+console.log('\ninstance cap on a defect-heavy mesh')
+{
+  // A fan of loose triangles: every one contributes open edges, far past the cap.
+  const faces: number[][] = []
+  for (let i = 0; i < 400; i++) faces.push([i, 0, 0, i + 1, 0, 0, i, 1, 0])
+  const { analysis } = pipeline(faces)
+  const boundary = analysis.issues.find((i) => i.kind === 'boundary')!
+  check('instances capped', boundary.instances.length, MAX_INSTANCES)
+  check('count still reports the true total', boundary.count > MAX_INSTANCES, true)
+  check('remainder is reported', boundary.hiddenInstances, boundary.count - MAX_INSTANCES)
+}
+
+console.log('\nrepair: fill a hole')
+{
+  const faces = cubeTriangles()
+  faces.splice(2, 1) // remove half the top face
+  const { mesh, analysis } = pipeline(faces)
+  check('starts not watertight', analysis.watertight, false)
+
+  const fixed = repairMesh(mesh, { fillHoles: true, fixWinding: false, dropDegenerate: false })
+  const after = analyseMesh(fixed.mesh)
+  check('one loop filled', fixed.stats.filledLoops, 1)
+  check('patch is a single triangle', fixed.stats.addedTriangles, 1)
+  check('now watertight', after.watertight, true)
+  check('no boundary edges left', after.boundaryEdges.length, 0)
+  check('still one shell', after.shells.length, 1)
+  check('volume still positive', after.shells[0]!.signedVolume > 0, true)
+  check('patch buffer matches added faces', fixed.patch.length, fixed.stats.addedTriangles * 9)
+}
+
+console.log('\nrepair: fill a larger hole')
+{
+  // Remove a whole face of the cube, leaving a 4-edge boundary loop.
+  const faces = cubeTriangles()
+  faces.splice(2, 2)
+  const { mesh } = pipeline(faces)
+  const fixed = repairMesh(mesh, { fillHoles: true, fixWinding: false, dropDegenerate: false })
+  const after = analyseMesh(fixed.mesh)
+  check('one loop filled', fixed.stats.filledLoops, 1)
+  check('ear clipping used n-2 triangles', fixed.stats.addedTriangles, 2)
+  check('now watertight', after.watertight, true)
+  check('outward facing', after.shells[0]!.signedVolume > 0, true)
+  check('no flipped faces introduced', after.flippedTriangles.length, 0)
+}
+
+console.log('\nrepair: re-wind flipped faces')
+{
+  const faces = cubeTriangles()
+  const f = faces[5]!
+  faces[5] = [f[0]!, f[1]!, f[2]!, f[6]!, f[7]!, f[8]!, f[3]!, f[4]!, f[5]!]
+  const { mesh, analysis } = pipeline(faces)
+  check('starts with one flipped face', analysis.flippedTriangles.length, 1)
+
+  const fixed = repairMesh(mesh, { fillHoles: false, fixWinding: true, dropDegenerate: false })
+  const after = analyseMesh(fixed.mesh)
+  check('one face rewound', fixed.stats.rewoundTriangles, 1)
+  check('no flipped faces left', after.flippedTriangles.length, 0)
+  check('triangle count unchanged', fixed.mesh.triangleCount, mesh.triangleCount)
+}
+
+console.log('\nrepair: re-wind a fully inverted solid')
+{
+  const faces = cubeTriangles().map((f) => [
+    f[0]!, f[1]!, f[2]!, f[6]!, f[7]!, f[8]!, f[3]!, f[4]!, f[5]!,
+  ])
+  const { mesh, analysis } = pipeline(faces)
+  check('starts inside-out', analysis.shells[0]!.signedVolume < 0, true)
+
+  const fixed = repairMesh(mesh, { fillHoles: false, fixWinding: true, dropDegenerate: false })
+  const after = analyseMesh(fixed.mesh)
+  check('all 12 faces rewound', fixed.stats.rewoundTriangles, 12)
+  check('now encloses positive volume', after.shells[0]!.signedVolume > 0, true)
+  check('no flipped faces reported', after.flippedTriangles.length, 0)
+}
+
+console.log('\nrepair: drop degenerate faces')
+{
+  const faces = cubeTriangles()
+  faces.push([0, 0, 0, 5, 0, 0, 10, 0, 0])
+  const { mesh, analysis } = pipeline(faces)
+  check('starts with one degenerate', analysis.degenerateTriangles.length, 1)
+
+  const fixed = repairMesh(mesh, { fillHoles: false, fixWinding: false, dropDegenerate: true })
+  const after = analyseMesh(fixed.mesh)
+  check('one face removed', fixed.stats.removedTriangles, 1)
+  check('12 faces remain', fixed.mesh.triangleCount, 12)
+  check('none degenerate', after.degenerateTriangles.length, 0)
+  check('still watertight', after.watertight, true)
+}
+
+console.log('\nrepair: all three together on a messy mesh')
+{
+  const faces = cubeTriangles()
+  faces.splice(2, 1)                                   // hole
+  const g = faces[4]!
+  faces[4] = [g[0]!, g[1]!, g[2]!, g[6]!, g[7]!, g[8]!, g[3]!, g[4]!, g[5]!] // flipped
+  faces.push([0, 0, 0, 5, 0, 0, 10, 0, 0])             // degenerate
+  const { mesh, analysis } = pipeline(faces)
+  check('starts broken', analysis.issues.length >= 3, true)
+
+  const fixed = repairMesh(mesh, { fillHoles: true, fixWinding: true, dropDegenerate: true })
+  const after = analyseMesh(fixed.mesh)
+  check('watertight after repair', after.watertight, true)
+  check('no flipped faces', after.flippedTriangles.length, 0)
+  check('no degenerate faces', after.degenerateTriangles.length, 0)
+  check('single shell', after.shells.length, 1)
+  check('outward facing', after.shells[0]!.signedVolume > 0, true)
+  check('reports nothing', after.issues.length, 0)
+}
+
+console.log('\nrepair: a clean mesh is left alone')
+{
+  const { mesh } = pipeline(cubeTriangles())
+  const fixed = repairMesh(mesh, { fillHoles: true, fixWinding: true, dropDegenerate: true })
+  check('nothing filled', fixed.stats.filledLoops, 0)
+  check('nothing rewound', fixed.stats.rewoundTriangles, 0)
+  check('nothing removed', fixed.stats.removedTriangles, 0)
+  check('triangle count unchanged', fixed.mesh.triangleCount, 12)
+}
+
+console.log('\nrepair: export round-trips')
+{
+  const faces = cubeTriangles()
+  faces.splice(2, 1)
+  const { mesh } = pipeline(faces)
+  const fixed = repairMesh(mesh, { fillHoles: true, fixWinding: true, dropDegenerate: true })
+
+  const stl = exportStl(fixed.mesh)
+  const reloaded = indexMesh(parseStl(stl), DEFAULT_SETTINGS.weldEpsilon)
+  const after = analyseMesh(reloaded)
+  check('same triangle count', reloaded.triangleCount, fixed.mesh.triangleCount)
+  check('still watertight after a round trip', after.watertight, true)
+  check('bounds preserved', reloaded.bounds.size.map((n) => Math.round(n)), [10, 10, 10])
+}
+
+console.log('\nmalformed input')
+{
+  const bad = (buffer: ArrayBuffer): string => {
+    try {
+      parseStl(buffer)
+      return 'no error'
+    } catch (error) {
+      return error instanceof StlParseError ? 'StlParseError' : 'wrong error'
+    }
+  }
+  check('empty file', bad(new ArrayBuffer(0)), 'StlParseError')
+  check('tiny file', bad(new ArrayBuffer(4)), 'StlParseError')
+  check('random bytes', bad(new TextEncoder().encode('this is not an stl at all').buffer as ArrayBuffer), 'StlParseError')
+}
+
+console.log(`\n${checks - failures}/${checks} checks passed`)
+if (failures > 0) process.exit(1)
