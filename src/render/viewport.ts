@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { orientedFootprint } from '../core/footprint'
 import type { Footprint } from '../core/footprint'
 import { textCanvas, textTexture } from './label'
+import { DEFAULT_MESH_COLOR, shade } from './palette'
 import type { Bounds } from '../core/types'
 import type { Highlights } from '../worker/protocol'
 
@@ -15,7 +16,9 @@ const DEFECT = {
   degenerate: 0xf5d547,
 } as const
 
-const SURFACE = 0x8fa3bd
+/** Where the model starts. The Colour menu can move it anywhere in
+ *  palette.ts; everything the model is drawn with follows `this.surface`. */
+const SURFACE = DEFAULT_MESH_COLOR.hex
 const EDGE = 0x1b2533
 /** Mirrors --shell-select / --shell-dim in tokens.css. */
 const SHELL_SELECT = 0x8c9eff
@@ -23,9 +26,11 @@ const SHELL_DIM = 0x3a4655
 /** Mint, for geometry the repair added (artboard 2b). */
 const PATCH = 0x6fe3b0
 const SECTION_LINE = 0x6fe3b0
-/** Cut material. A flatter, cooler slate than the outer surface so the
- *  section reads as the inside of the part rather than more of its skin. */
-const SECTION_CAP = 0x6b7d94
+/** Cut material, as a fraction of whatever the surface is. A shade down from
+ *  the skin so the section reads as the inside of the part rather than more of
+ *  its outside — and derived rather than fixed, so a bone part is not cut open
+ *  to reveal slate. */
+const SECTION_CAP_SCALE = 0.76
 
 /** Ground grid. Graphite on purpose: a ruler under the part must never read
  *  as a finding, so it stays out of the defect colours and out of mint. */
@@ -79,6 +84,15 @@ export class Viewport {
 
   private solid: THREE.Mesh | null = null
   private shellHighlight: THREE.Mesh | null = null
+  /** The colour the model is painted in. Held here rather than read off the
+   *  solid, because the solid is dimmed while a part is selected and would
+   *  hand back the dim colour instead of the chosen one. */
+  private surface = SURFACE
+  /** True while a part is picked, which is the one state where the body is
+   *  deliberately not wearing `surface`. */
+  private shellSelected = false
+  /** The repair preview's own body, so a colour change reaches it too. */
+  private repairSolid: THREE.Mesh | null = null
   /** Kept so a shell's geometry can be rebuilt on demand. */
   private meshData: { positions: Float32Array; indices: Uint32Array; shellIds: Uint32Array } | null =
     null
@@ -233,7 +247,7 @@ export class Viewport {
     geometry.setIndex(new THREE.BufferAttribute(indices, 1))
 
     const material = new THREE.MeshStandardMaterial({
-      color: SURFACE,
+      color: this.surface,
       roughness: 0.55,
       metalness: 0.04,
       side: THREE.DoubleSide, // show interior walls through open boundaries
@@ -252,7 +266,7 @@ export class Viewport {
 
     this.wireframe = new THREE.LineSegments(
       new THREE.WireframeGeometry(geometry),
-      new THREE.LineBasicMaterial({ color: SURFACE, transparent: true, opacity: 0.35 }),
+      new THREE.LineBasicMaterial({ color: this.surface, transparent: true, opacity: 0.35 }),
     )
     this.wireframe.visible = false
     this.modelGroup.add(this.wireframe)
@@ -875,6 +889,31 @@ export class Viewport {
     if (this.wireframe) this.wireframe.visible = !shaded
   }
 
+  /** Paint the model a different colour.
+   *
+   *  Only the model: the defect highlights, the mint patch, the selected part
+   *  and every measuring aid keep their own colours, because each of those
+   *  means something and would stop meaning it if it moved with a preference.
+   *  The cut face follows, being the same material seen from inside. */
+  setSurfaceColor(hex: number): void {
+    if (hex === this.surface) return
+    this.surface = hex
+
+    // A dimmed body is saying "not the part you picked". It stays dim until
+    // the selection is dropped, at which point highlightShell paints it in
+    // whatever colour is current.
+    if (this.solid && !this.shellSelected) {
+      ;(this.solid.material as THREE.MeshStandardMaterial).color.setHex(hex)
+    }
+    if (this.wireframe) (this.wireframe.material as THREE.LineBasicMaterial).color.setHex(hex)
+    if (this.repairSolid) {
+      ;(this.repairSolid.material as THREE.MeshStandardMaterial).color.setHex(hex)
+    }
+    // The cap is rebuilt from the plane it was cut on, so re-cutting at the
+    // same height is all it takes to repaint it.
+    if (this.clipZ !== null) this.setClipZ(this.clipZ)
+  }
+
   /** Draw the cross-section as line segments sitting on the cut plane. */
   setSection(segments: Float32Array, z: number): void {
     this.clearSection()
@@ -1003,7 +1042,7 @@ export class Viewport {
     const cap = new THREE.Mesh(
       new THREE.PlaneGeometry(Math.max(sx, sy) * 1.6 || 1, Math.max(sx, sy) * 1.6 || 1),
       new THREE.MeshStandardMaterial({
-        color: SECTION_CAP,
+        color: shade(this.surface, SECTION_CAP_SCALE),
         roughness: 0.95,
         metalness: 0,
         side: THREE.DoubleSide,
@@ -1116,18 +1155,17 @@ export class Viewport {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setIndex(new THREE.BufferAttribute(indices, 1))
 
-    this.repairGroup.add(
-      new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({
-          color: SURFACE,
-          roughness: 0.55,
-          metalness: 0.04,
-          side: THREE.DoubleSide,
-          flatShading: true,
-        }),
-      ),
+    this.repairSolid = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        color: this.surface,
+        roughness: 0.55,
+        metalness: 0.04,
+        side: THREE.DoubleSide,
+        flatShading: true,
+      }),
     )
+    this.repairGroup.add(this.repairSolid)
 
     const triangleCount = indices.length / 3
     if (triangleCount > 0 && triangleCount <= FEATURE_EDGE_LIMIT) {
@@ -1170,6 +1208,7 @@ export class Viewport {
       this.repairGroup.remove(child)
       disposeObject(child)
     }
+    this.repairSolid = null
     this.repairGroup.visible = false
     this.modelGroup.visible = true
     this.highlightGroup.visible = true
@@ -1249,11 +1288,12 @@ export class Viewport {
       this.shellHighlight = null
     }
 
+    this.shellSelected = shellIndex !== null
     const material = this.solid?.material as THREE.MeshStandardMaterial | undefined
     if (!material || !this.meshData) return
 
     if (shellIndex === null) {
-      material.color.setHex(SURFACE)
+      material.color.setHex(this.surface)
       if (this.featureEdges) (this.featureEdges.material as THREE.Material).opacity = 0.55
       return
     }
@@ -1341,6 +1381,9 @@ export class Viewport {
     this.featureEdges = null
     this.shellHighlight = null
     this.meshData = null
+    // The new mesh is drawn in `surface`, not dimmed, until something is
+    // picked in it.
+    this.shellSelected = false
   }
 
   dispose(): void {

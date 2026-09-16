@@ -139,6 +139,9 @@ export interface Settings {
    *  It selects a bed to draw; buildVolume is what the score reads either
    *  way, so turning the plate off never changes the score. */
   platePreset: string
+  /** Which colour the model is drawn in: an id from render/palette.ts. Purely
+   *  how the mesh looks — nothing downstream of it reads this. */
+  surfaceColor: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -147,4 +150,5 @@ export const DEFAULT_SETTINGS: Settings = {
   overhangThreshold: 45,
   weldEpsilon: 1e-4,
   platePreset: 'none',
+  surfaceColor: 'slate',
 }

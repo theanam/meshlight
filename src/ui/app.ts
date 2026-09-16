@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from '../core/types'
 import type { RepairOptions } from '../core/repair'
 import type { Settings } from '../core/types'
 import { NavCube } from '../render/navcube'
+import { MESH_COLORS, cssHex, meshColorHex } from '../render/palette'
 import { Viewport } from '../render/viewport'
 import type { Mode } from '../store'
 import { NO_REPAIRS, saveSettings, store } from '../store'
@@ -93,6 +94,8 @@ export function mountApp(root: HTMLElement): void {
   const viewbar = root.querySelector<HTMLElement>('.viewbar')!
   const cubeCanvas = root.querySelector<HTMLCanvasElement>('.viewbar__cube')!
   const plateMenu = root.querySelector<HTMLElement>('[data-menu="plate"]')!
+  const colorButton = root.querySelector<HTMLButtonElement>('[data-action="color"]')!
+  const colorMenu = root.querySelector<HTMLElement>('[data-menu="color"]')!
   const compare = root.querySelector<HTMLElement>('.segmented--compare')!
   const cutline = root.querySelector<SVGSVGElement>('.cutline')!
   const cutStroke = root.querySelector<SVGLineElement>('.cutline__stroke')!
@@ -457,13 +460,18 @@ export function mountApp(root: HTMLElement): void {
   // The controls sit in two places now — the view picker with the cube, the
   // overlay toggles up beside Shaded/Wire — so this listens across the stage
   // and answers only to the actions it owns. `help` also lives here.
-  const VIEW_ACTIONS = new Set(['reset', 'fit', 'parts', 'box', 'plate', 'grid', 'cap'])
+  const VIEW_ACTIONS = new Set(['reset', 'fit', 'parts', 'box', 'plate', 'grid', 'cap', 'color'])
   root.querySelector('.stage')!.addEventListener('click', (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-action]')
     if (!button || !VIEW_ACTIONS.has(button.dataset.action ?? '')) return
     const action = button.dataset.action
     if (action === 'cap') store.set({ capSection: !store.get().capSection })
-    else if (action === 'reset') viewport.resetView()
+    // Colour is a choice between six, never an on/off, so the button only
+    // ever opens the list.
+    else if (action === 'color') {
+      if (colorMenu.hidden) openColorMenu()
+      else closeColorMenu()
+    } else if (action === 'reset') viewport.resetView()
     else if (action === 'fit') viewport.fitCamera()
     else if (action === 'parts') {
       const on = !store.get().pickParts
@@ -578,6 +586,7 @@ export function mountApp(root: HTMLElement): void {
     plateMenu.querySelectorAll<HTMLButtonElement>('[data-plate]').forEach((item) =>
       item.setAttribute('aria-checked', String(item.dataset.plate === chosen)),
     )
+    closeColorMenu()
     plateMenu.hidden = false
     plateButton.setAttribute('aria-expanded', 'true')
   }
@@ -618,15 +627,48 @@ export function mountApp(root: HTMLElement): void {
     if (preset && store.get().model) send({ type: 'rescore', settings })
   })
 
+  // ---- mesh colour menu -------------------------------------------------
+
+  function openColorMenu(): void {
+    const chosen = store.get().settings.surfaceColor
+    colorMenu.querySelectorAll<HTMLButtonElement>('[data-color]').forEach((item) =>
+      item.setAttribute('aria-checked', String(item.dataset.color === chosen)),
+    )
+    closePlateMenu()
+    colorMenu.hidden = false
+    colorButton.setAttribute('aria-expanded', 'true')
+  }
+
+  function closeColorMenu(): void {
+    colorMenu.hidden = true
+    colorButton.setAttribute('aria-expanded', 'false')
+  }
+
+  colorMenu.addEventListener('click', (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-color]')
+    if (!item) return
+    closeColorMenu()
+
+    // Nothing downstream reads this — no re-analysis, no rescore. It is paint.
+    const settings: Settings = { ...store.get().settings, surfaceColor: item.dataset.color! }
+    store.set({ settings })
+    saveSettings(settings)
+  })
+
   // Dismiss on anything that is not the menu or the button that opened it.
   document.addEventListener('click', (event) => {
     const target = event.target as Node
     if (!plateMenu.hidden && !plateMenu.contains(target) && !plateButton.contains(target)) {
       closePlateMenu()
     }
+    if (!colorMenu.hidden && !colorMenu.contains(target) && !colorButton.contains(target)) {
+      closeColorMenu()
+    }
   })
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !plateMenu.hidden) closePlateMenu()
+    if (event.key !== 'Escape') return
+    if (!plateMenu.hidden) closePlateMenu()
+    if (!colorMenu.hidden) closeColorMenu()
   })
 
   // ---- cutaway --------------------------------------------------------
@@ -877,6 +919,11 @@ export function mountApp(root: HTMLElement): void {
     editBadge.textContent = state.history.pending > 0 ? String(state.history.pending) : '•'
 
     viewport.setShaded(state.shaded)
+    // The button wears a dot in whatever the model is wearing, so the current
+    // colour is readable without opening the menu.
+    const surface = meshColorHex(state.settings.surfaceColor)
+    viewport.setSurfaceColor(surface)
+    colorButton.style.setProperty('--swatch', cssHex(surface))
     viewport.setGridVisible(state.showGrid)
     segmented.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) =>
       button.setAttribute('aria-pressed', String((button.dataset.view === 'shaded') === state.shaded)),
@@ -1178,6 +1225,21 @@ function shellHtml(): string {
               <span>Custom…</span>
               <span class="menu__dim mono">set in Setup</span>
             </button>
+          </div>
+        </div>
+        <div class="tool">
+          <button class="iconbtn iconbtn--swatch" data-action="color" aria-haspopup="menu" aria-expanded="false"
+                  aria-label="Mesh colour" data-tip="Colour — how the model itself is painted">${toolIcons.color}</button>
+          <div class="menu" data-menu="color" role="menu" aria-label="Mesh colour" hidden>
+            ${MESH_COLORS.map(
+              (color) => `
+              <button class="menu__item" role="menuitemradio" data-color="${color.id}">
+                <span class="menu__swatched">
+                  <span class="menu__swatch" style="background:${cssHex(color.hex)}"></span>${color.name}
+                </span>
+                <span class="menu__dim">${color.note}</span>
+              </button>`,
+            ).join('')}
           </div>
         </div>
         <button class="iconbtn" data-action="parts" aria-pressed="false"

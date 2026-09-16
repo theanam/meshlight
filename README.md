@@ -271,6 +271,22 @@ picker and the Fit control. Grid numbers use the same millimetre coordinates
 the report quotes for every defect, so a position in the list and a position on
 the plane are the same reading.
 
+**Colour.** The model can be painted in one of six colours from the drop button
+in the top bar — slate, bone, graphite, steel, copper or sage. It is filament
+colour, not decoration: a part is easier to judge in something close to what it
+will be printed in, and a light bone shows shallow surface detail that slate
+swallows. The choice is saved with the rest of your settings.
+
+The palette is deliberately narrow. Saturated red, orange and yellow mean a
+defect, mint means geometry a repair added, and indigo means the part you
+picked — every one of those is a claim about the mesh, and a body wearing one
+would be making that claim by accident. So the colours on offer are neutrals
+and hues held far enough down in saturation to read as a material rather than
+as a finding, and nothing else in the viewport moves with them: the highlights,
+the patch, the selected shell, the grid and the boxes keep their own meanings.
+The cut face is the exception, and follows the surface a shade darker, because
+it is the same material seen from inside.
+
 ### Cutaway
 Drag the vertical Z handle to cut the model open. Everything above the cut is
 clipped away and the cross-section is drawn in mint. Triangles are binned into

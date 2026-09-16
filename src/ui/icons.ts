@@ -80,6 +80,14 @@ export const toolIcons = {
   <path d="M2.5 2.5h2M13.5 2.5h2M2.5 15.5h2M13.5 15.5h2M2.5 2.5v2M2.5 13.5v2M15.5 2.5v2M15.5 13.5v2"
         stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
 </svg>`,
+  /** A paint drop, half filled: the one glyph at this size that reads as
+   *  "what colour is this" rather than as another overlay to switch on. */
+  color: `
+<svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+  <path d="M9 1.8c3.1 3.7 5.3 6.2 5.3 8.5A5.3 5.3 0 0 1 9 15.9a5.3 5.3 0 0 1-5.3-5.6c0-2.3 2.2-4.8 5.3-8.5z"
+        stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  <path d="M9 15.9a5.3 5.3 0 0 0 5.3-5.6c0-1.2-.6-2.4-1.6-3.8L9 10.2z" fill="currentColor"/>
+</svg>`,
   fit: `
 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
   <path d="M1.5 6V3a1.5 1.5 0 0 1 1.5-1.5h3M12 1.5h3A1.5 1.5 0 0 1 16.5 3v3M16.5 12v3a1.5 1.5 0 0 1-1.5 1.5h-3M6 16.5H3A1.5 1.5 0 0 1 1.5 15v-3"
