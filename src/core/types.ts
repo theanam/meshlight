@@ -137,7 +137,12 @@ export interface Settings {
   /** Which build plate is drawn under the model: a preset id from
    *  ui/plates.ts, 'custom' for the numbers above, or 'none' for no plate.
    *  It selects a bed to draw; buildVolume is what the score reads either
-   *  way, so turning the plate off never changes the score. */
+   *  way, so turning the plate off never changes the score.
+   *
+   *  It defaults to 'custom' rather than to a named printer: the numbers
+   *  below are a default, not a reading of anyone's machine, and writing
+   *  "Ender 3" across the bed of someone who owns a Prusa is a claim this
+   *  app has no business making. Pick a printer and the bed says so. */
   platePreset: string
   /** Which colour the model is drawn in: an id from render/palette.ts. Purely
    *  how the mesh looks — nothing downstream of it reads this. */
@@ -149,6 +154,10 @@ export const DEFAULT_SETTINGS: Settings = {
   nozzleDiameter: 0.4,
   overhangThreshold: 45,
   weldEpsilon: 1e-4,
-  platePreset: 'none',
+  /* Drawn from buildVolume above, unlabelled until a printer is picked. The
+     score has always graded "fits build volume" against these numbers; the
+     viewport used to refuse to draw the bed it was grading against, which
+     left the check measuring something invisible. */
+  platePreset: 'custom',
   surfaceColor: 'slate',
 }

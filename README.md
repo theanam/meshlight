@@ -255,6 +255,12 @@ otherwise hides — a 4 mm bracket and a 300 mm vase fill the frame identically.
   sits. Spacing adapts to the part so it always lands on a 1, 2 or 5 × 10ⁿ step
   with roughly twenty cells across the footprint, majors are numbered in
   millimetres, and the configured build volume is drawn as a plate outline.
+  A bed is drawn from the first visit: the score has always graded "fits build
+  volume" against the default 220 × 220 × 250, and the viewport used to refuse
+  to draw the bed it was grading against. It carries the Setup numbers
+  unlabelled until you pick your printer from the plate button, which then
+  writes that machine's name on it. Choose `None` to turn it off; the choice
+  is remembered, and the score reads the same volume either way.
 - **Bounding box** — the part's extents, with its three dimensions written on
   the edges that measure them.
 - **Select parts** — off by default. With it on, clicking a body in the

@@ -638,7 +638,11 @@ export class Viewport {
     // foreshortening without it fighting a screw as well.
     this.addEdgeLabel(
       this.plateGroup,
-      this.plateName ?? 'Custom plate',
+      // "Custom" was right when a bed had to be chosen before one was drawn.
+      // The default bed is now the numbers in Setup, untouched by anyone, and
+      // calling that custom claims an edit nobody made. The size is written
+      // alongside either way; a picked printer replaces this with its name.
+      this.plateName ?? 'Build plate',
       new THREE.Vector3(mx, my - by / 2 + margin, rim),
       new THREE.Vector3(1, 0, 0),
       new THREE.Vector3(0, 1, 0),
