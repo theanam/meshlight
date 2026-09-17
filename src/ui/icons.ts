@@ -39,6 +39,16 @@ export const railIcons = {
 </svg>`,
 } as const
 
+/** Marks the one action that puts a mesh on screen, in the footer and on the
+ *  drop screen. A folder rather than an upload arrow: nothing is being sent
+ *  anywhere, and an arrow pointing out of the machine is the one impression
+ *  this app cannot afford to give. */
+export const fileIcon = `
+<svg width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+  <path d="M1.7 4.5a1.6 1.6 0 0 1 1.6-1.6h3l1.8 2.1h7.2a1.6 1.6 0 0 1 1.6 1.6v7a1.6 1.6 0 0 1-1.6 1.6H3.3a1.6 1.6 0 0 1-1.6-1.6z"
+        stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>`
+
 /** Viewport tools. These sit as round buttons over the 3D view, so they are
  *  glyph-only and drawn on the same 18px box as each other. */
 export const toolIcons = {

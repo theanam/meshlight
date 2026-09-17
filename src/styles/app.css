@@ -610,6 +610,24 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .panel__actions { display: flex; gap: 10px; }
 .panel__actions .btn { flex: 1; }
 
+/* Opening a file is the only thing the footer does, and the way into and back
+   out of every other thing the app does, so it takes the whole row and enough
+   weight to be found without hunting. Not the mint primary: that belongs to
+   whichever action the open tab is offering, and a permanent second one in the
+   footer would compete with it in every mode. */
+.btn--open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 12px 16px;
+  font-size: var(--text-md);
+  color: var(--ink);
+  background: var(--raised);
+  border-color: var(--line-control);
+}
+.btn--open:hover { border-color: var(--ink-muted); background: var(--surface); }
+
 /* ---- report rail (artboard 1b) --------------------------------------- */
 
 .panel__fixed { flex: none; }
@@ -1022,7 +1040,17 @@ a.btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: no
   font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-muted);
   border: 1px solid var(--line); border-radius: var(--r-pill); padding: 8px 14px;
 }
-.drop__cta { font-size: var(--text-md); padding: 13px 22px; border-radius: var(--r-lg); }
+/* The one thing this screen is asking for. It was a 14px button under three
+   lines of supporting text and read as the least of them. */
+.drop__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  padding: 17px 30px;
+  border-radius: var(--r-lg);
+}
 .drop__error { color: var(--defect-nonmanifold); font-size: var(--text-base); min-height: 1.2em; }
 
 /* Sits under the primary action as a quiet second offer: the first screen

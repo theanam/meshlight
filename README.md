@@ -227,8 +227,7 @@ Edit tab and nowhere else. The badge is mint rather than red: red on the Report
 and Fix badges means something is wrong with the mesh, and an edit is a state,
 not a defect. It counts unapplied changes, or shows a dot in the one case with
 nothing sensible to count — undoing back past an apply leaves a mesh that
-differs from the applied one while the count reads zero. The footer's `Re-run`
-still re-reads the file from scratch, which discards edits; its tooltip says so.
+differs from the applied one while the count reads zero.
 
 **No score in Edit.** The printability score grades a mesh for printing, which
 is not the question you are asking while you are still changing its shape — and

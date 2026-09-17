@@ -17,7 +17,7 @@ import type {
 import type { Axis, CutKeep } from '../core/edit'
 import { renderEdit } from './edit-panel'
 import { REPO_URL, githubIcon, helpHtml, mountHelp } from './help'
-import { markSvg, railIcons, toolIcons } from './icons'
+import { fileIcon, markSvg, railIcons, toolIcons } from './icons'
 import { PLATE_PRESETS, findPlate, plateLabel } from './plates'
 import {
   filterIssues,
@@ -78,7 +78,6 @@ export function mountApp(root: HTMLElement): void {
   const panelTitle = root.querySelector<HTMLElement>('.panel__title')!
   const panelLede = root.querySelector<HTMLElement>('.panel__lede')!
   const panelStat = root.querySelector<HTMLElement>('.panel__stat')!
-  const rerun = root.querySelector<HTMLButtonElement>('#rerun')!
   const chip = root.querySelector<HTMLElement>('.chip--file')!
   const scorecard = root.querySelector<HTMLElement>('.scorecard')!
   const legend = root.querySelector<HTMLElement>('.legend')!
@@ -115,10 +114,6 @@ export function mountApp(root: HTMLElement): void {
   viewport.onFrame = (orientation) => navCube.sync(orientation)
   const worker = new Worker(new URL('../worker/mesh.worker.ts', import.meta.url), { type: 'module' })
 
-  /** Keeps the last buffer around so re-running analysis after a settings
-   *  change does not ask the user to pick the file again. */
-  let lastBuffer: ArrayBuffer | null = null
-
   const send = (message: WorkerRequest, transfer: Transferable[] = []): void =>
     worker.postMessage(message, transfer)
 
@@ -133,9 +128,6 @@ export function mountApp(root: HTMLElement): void {
       expandedIssue: null,
       selectedInstance: null,
     })
-    // The worker takes ownership of the buffer it receives, so keep our own
-    // copy for re-runs rather than reading the source a second time.
-    lastBuffer = buffer.slice(0)
     send({ type: 'load', buffer, settings: store.get().settings, fileName: name }, [buffer])
   }
 
@@ -903,16 +895,6 @@ export function mountApp(root: HTMLElement): void {
     if (store.get().model) send({ type: 'rescore', settings })
   })
 
-  rerun.addEventListener('click', () => {
-    if (!lastBuffer) return
-    const buffer = lastBuffer.slice(0)
-    store.set({ busy: true, error: null })
-    send(
-      { type: 'load', buffer, settings: store.get().settings, fileName: store.get().fileName ?? '' },
-      [buffer],
-    )
-  })
-
   // Development only. Vite substitutes `false` for import.meta.env.DEV in a
   // production build, so this branch and the sample module it pulls in are
   // both dropped from the bundle — a release always opens on the drop screen.
@@ -1152,15 +1134,6 @@ export function mountApp(root: HTMLElement): void {
     panelStat.textContent = state.model
       ? `analysis ${(state.model.elapsedMs / 1000).toFixed(1)} s · worker`
       : 'no model loaded'
-    rerun.disabled = !hasModel
-    // The footer belongs to every mode, so it does not change shape when the
-    // mesh has been edited — the badge on the Edit tab carries that. It does
-    // owe anyone hovering the truth about what it will do to their edits.
-    rerun.title =
-      state.history.depth > 0
-        ? 'Read the file again from scratch — this discards every edit'
-        : 'Analyse the same file again'
-
     if (state.mode === 'cutaway' && state.model) showCutHeight()
   })
 
@@ -1347,7 +1320,7 @@ function shellHtml(): string {
         </p>
         <span class="drop__formats mono">${SUPPORTED_EXTENSIONS.map((e) => e.slice(1).toUpperCase()).join(' · ')}</span>
         <span class="drop__promise"><span class="dot"></span>nothing leaves your machine</span>
-        <button class="btn btn--primary drop__cta" data-open-file>Choose a file</button>
+        <button class="btn btn--primary drop__cta" data-open-file>${fileIcon}Choose a file</button>
         <button class="drop__help" data-action="help" aria-haspopup="dialog" aria-expanded="false">
           How it works
         </button>
@@ -1375,8 +1348,7 @@ function shellHtml(): string {
       <div class="panel__foot">
         <span class="panel__stat">no model loaded</span>
         <div class="panel__actions">
-          <button class="btn" data-open-file>Open file</button>
-          <button class="btn" id="rerun" disabled>Re-run</button>
+          <button class="btn btn--open" data-open-file>${fileIcon}Open file</button>
         </div>
       </div>
     </aside>
