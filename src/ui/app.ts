@@ -85,6 +85,9 @@ export function mountApp(root: HTMLElement): void {
   const cutbar = root.querySelector<HTMLElement>('.cutbar')!
   const cutRange = root.querySelector<HTMLInputElement>('#cut-range')!
   const cutReadout = root.querySelector<HTMLElement>('.cutbar__readout')!
+  const cutTrack = root.querySelector<HTMLElement>('.cutbar__track')!
+  const cutMm = root.querySelector<HTMLElement>('.cutbar__mm')!
+  const cutPct = root.querySelector<HTMLElement>('.cutbar__pct')!
   const segmented = root.querySelector<HTMLElement>('.segmented:not(.segmented--compare)')!
   const gridButton = root.querySelector<HTMLButtonElement>('[data-action="grid"]')!
   const boxButton = root.querySelector<HTMLButtonElement>('[data-action="box"]')!
@@ -680,6 +683,47 @@ export function mountApp(root: HTMLElement): void {
     send({ type: 'section', z })
   })
 
+  /** Width of the range's thumb, which is the one number CSS knows and the
+   *  geometry here does not: the handle's centre travels the track's height
+   *  less its own size, half of it at each end. Keep it in step with the
+   *  `::-webkit-slider-thumb` rule in app.css. */
+  const CUT_THUMB_PX = 22
+
+  /** Write the cut height into the bubble and move the bubble to the handle.
+   *
+   *  The reading rides the handle rather than sitting at the end of the bar,
+   *  because at full height the two are most of a screen apart, and looking
+   *  away from the cut to find out where the cut is defeats the point of
+   *  putting the number on the model in the first place. */
+  function showCutHeight(): void {
+    const { model, cutZ } = store.get()
+    if (!model) return
+
+    const z = cutZ ?? model.bounds.center[2]
+    const span = model.bounds.size[2] || 1
+    const fraction = (z - model.bounds.min[2]) / span
+    cutMm.textContent = `${z.toFixed(2)} mm`
+    cutPct.textContent = `${(fraction * 100).toFixed(0)}%`
+
+    // A hidden bar measures zero, and placing against that would park the
+    // bubble at the top until the next drag.
+    const height = cutTrack.clientHeight
+    if (height === 0) return
+    // The track runs top to bottom, the model bottom to top.
+    const travel = Math.max(height - CUT_THUMB_PX, 0)
+    const top = CUT_THUMB_PX / 2 + (1 - Math.min(Math.max(fraction, 0), 1)) * travel
+    cutReadout.style.top = `${top}px`
+    // Light the track from the bottom up to the handle: below the cut is what
+    // is left of the part.
+    cutTrack.style.setProperty('--cut-fill', `${height - top}px`)
+  }
+
+  // The track is as tall as the window, so its length changes with the window
+  // and the handle the bubble is pinned to moves with it.
+  window.addEventListener('resize', () => {
+    if (store.get().mode === 'cutaway') showCutHeight()
+  })
+
   // ---- panel interaction ----------------------------------------------
 
   panelBody.addEventListener('click', (event) => {
@@ -1117,12 +1161,7 @@ export function mountApp(root: HTMLElement): void {
         ? 'Read the file again from scratch — this discards every edit'
         : 'Analyse the same file again'
 
-    if (state.mode === 'cutaway' && state.model) {
-      const z = state.cutZ ?? state.model.bounds.center[2]
-      const span = state.model.bounds.size[2] || 1
-      const percent = ((z - state.model.bounds.min[2]) / span) * 100
-      cutReadout.textContent = `${z.toFixed(2)} mm · ${percent.toFixed(0)}%`
-    }
+    if (state.mode === 'cutaway' && state.model) showCutHeight()
   })
 
 }
@@ -1281,8 +1320,15 @@ function shellHtml(): string {
 
       <div class="cutbar" hidden>
         <span class="cutbar__label mono">Z</span>
-        <input type="range" id="cut-range" min="0" max="1" step="0.001" value="0.5" aria-label="Cut height">
-        <span class="cutbar__readout mono">—</span>
+        <div class="cutbar__track">
+          <input type="range" id="cut-range" min="0" max="1" step="0.001" value="0.5" aria-label="Cut height">
+          <!-- Duplicates the value the range already announces, so it is
+               decorative to a screen reader. -->
+          <div class="cutbar__readout" aria-hidden="true">
+            <span class="cutbar__mm mono">—</span>
+            <span class="cutbar__pct mono">—</span>
+          </div>
+        </div>
       </div>
 
       <!-- The cut line is drawn over the canvas rather than in it: it is a

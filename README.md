@@ -289,7 +289,14 @@ it is the same material seen from inside.
 
 ### Cutaway
 Drag the vertical Z handle to cut the model open. Everything above the cut is
-clipped away and the cross-section is drawn in mint. Triangles are binned into
+clipped away and the cross-section is drawn in mint. The slider runs the full
+height of the viewport, the way a slicer's layer slider does: the cut travels
+the whole part, so the same drag buys more resolution, and the track lights up
+below the handle to show how much of the part survives. The height rides the
+handle rather than sitting at the end of the bar — millimetres first, then the
+percentage of the part's Z span — because at that length the ends are most of a
+screen apart, and looking away from the cut to find out where the cut is
+defeats the point of putting the number on the model. Triangles are binned into
 Z-slabs at load time, so scrubbing only ever touches the slab under the cursor.
 
 **Capped and open sections.** The cut face is filled in by default, so a

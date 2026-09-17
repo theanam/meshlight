@@ -415,17 +415,23 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 /* ---- cutaway handle (spec §5.5) -------------------------------------- */
 
 /* Vertical, on the right edge: the control moves the cut along Z, and a
-   horizontal slider for a vertical axis makes you translate every drag. */
+   horizontal slider for a vertical axis makes you translate every drag.
+
+   Full height, the way a slicer's layer slider runs. The cut travels the whole
+   part, so the control that moves it gets the whole view: the same drag buys
+   more resolution, and the handle's position down the side of the screen is
+   itself a reading of where the cut is before any number is consulted. It
+   clears the toolbar above and the empty corner below. */
 .cutbar {
   position: absolute;
   right: 28px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 86px;
+  bottom: 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 18px 14px;
+  gap: 12px;
+  padding: 14px 10px;
   background: var(--scrim-strong);
   border: 1px solid var(--line);
   border-radius: var(--r-xl);
@@ -438,12 +444,41 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   color: var(--ink-faint);
 }
 
-.cutbar__readout {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--accent);
-  text-align: center;
-  white-space: nowrap;
+/* Takes what the label leaves and gives the range something definite to
+   stretch inside, and the bubble something to be positioned against. */
+.cutbar__track {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 22px;
+}
+
+/* The track is drawn by the wrapper, in two parts: the whole run of it, and
+   the part below the cut. Below the cut is what survives, so that part is lit
+   — the bar then says how much of the part is left at a glance, which is the
+   question a slicer's slider is really answering. */
+.cutbar__track::before,
+.cutbar__track::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.cutbar__track::before {
+  top: 0;
+  bottom: 0;
+  background: var(--line-control);
+}
+.cutbar__track::after {
+  bottom: 0;
+  /* Set from app.ts, in pixels, so it ends under the handle's centre rather
+     than at a percentage the inset thumb never quite reaches. */
+  height: var(--cut-fill, 50%);
+  background: var(--accent);
+  opacity: 0.4;
 }
 
 .cutbar input[type='range'] {
@@ -453,31 +488,89 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
      maximum at the top, so the handle tracks the model's own Z axis. */
   writing-mode: vertical-lr;
   direction: rtl;
-  width: 4px;
-  height: min(46vh, 320px);
-  border-radius: 2px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  /* The grabbable box is the full width of the column, wider than the line it
+     runs down, because a track is easier to hit than it is to look at — and at
+     this length it is a long way to miss. The track itself is the wrapper's,
+     so this carries nothing but the thumb.
+     The stacking context keeps that thumb above the lit part of the track,
+     which is a later sibling and would otherwise paint over it. */
+  width: 22px;
+  background: none;
+  z-index: 1;
+}
+
+/* The reading rides the handle and hangs out over the model. At full height
+   the ends of the bar are most of a screen apart, so a number pinned to one of
+   them means looking away from the cut to find out where the cut is. */
+.cutbar__readout {
+  position: absolute;
+  right: calc(100% + 16px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 7px 12px;
+  background: var(--scrim-strong);
+  border: 1px solid var(--line-control);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+  /* It sits over the model and must never eat a drag meant for the orbit. */
+  pointer-events: none;
+}
+
+/* A leader to the track, so the bubble reads as pointing at the handle rather
+   than floating at an arbitrary height. */
+.cutbar__readout::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  width: 11px;
+  height: 1px;
   background: var(--line-control);
 }
 
-input[type='range']::-webkit-slider-thumb {
+/* The millimetre is the answer; the percentage is the context for it. */
+.cutbar__mm {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--accent);
+}
+.cutbar__pct {
+  font-size: var(--text-base);
+  color: var(--ink-dim);
+}
+
+/* Scoped to the cutaway: it is the only range in the app, and a rule this
+   specific should not be quietly deciding what the next one looks like.
+   Keep the size in step with CUT_THUMB_PX in app.ts, which places the reading
+   against the handle's centre. */
+.cutbar input[type='range']::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--accent);
   cursor: grab;
-  border: 3px solid var(--surface);
+  border: 4px solid var(--surface);
 }
-input[type='range']::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+.cutbar input[type='range']::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--accent);
   cursor: grab;
-  border: 3px solid var(--surface);
+  border: 4px solid var(--surface);
 }
-input[type='range']:active::-webkit-slider-thumb { cursor: grabbing; }
+.cutbar input[type='range']:active::-webkit-slider-thumb { cursor: grabbing; }
 
 /* ---- side panel ----------------------------------------------------- */
 
@@ -1412,8 +1505,9 @@ input.numfield__input--slim {
   .scorecard { left: 14px; right: 14px; bottom: 96px; }
   .stage__top { left: 14px; right: 14px; top: 14px; flex-wrap: wrap; }
   .scorecard { left: 14px; right: 14px; bottom: 14px; }
-  .cutbar { right: 14px; top: 46%; padding: 12px 10px; }
-  .cutbar input[type='range'] { height: min(30vh, 200px); }
+  /* Still the tallest thing it can be, but the toolbar wraps above it and the
+     scorecard runs the full width below. */
+  .cutbar { right: 14px; top: 104px; bottom: 96px; padding: 12px 7px; }
 
   /* Two rows of two, and the connectors stop meaning anything once the row
      wraps — so they go. */
