@@ -918,21 +918,27 @@ export class Viewport {
     if (this.clipZ !== null) this.setClipZ(this.clipZ)
   }
 
-  /** Draw the cross-section as line segments sitting on the cut plane. */
+  /** Draw the cross-section as line segments sitting on the cut plane.
+   *
+   *  This runs on every slider step, so only the geometry is replaced: the
+   *  line and plane materials stay put, as freeing them would free their
+   *  shaders and have the next step compile them again. */
   setSection(segments: Float32Array, z: number): void {
-    this.clearSection()
     if (!this.bounds) return
 
-    if (segments.length > 0) {
-      // Segments arrive as 2D (x, y) pairs; lift them onto the plane.
-      const points = new Float32Array((segments.length / 2) * 3)
-      for (let i = 0; i < segments.length / 2; i++) {
-        points[i * 3 + 0] = segments[i * 2]!
-        points[i * 3 + 1] = segments[i * 2 + 1]!
-        points[i * 3 + 2] = z
-      }
-      const geometry = new THREE.BufferGeometry()
-      geometry.setAttribute('position', new THREE.BufferAttribute(points, 3))
+    // Segments arrive as 2D (x, y) pairs; lift them onto the plane.
+    const points = new Float32Array((segments.length / 2) * 3)
+    for (let i = 0; i < segments.length / 2; i++) {
+      points[i * 3 + 0] = segments[i * 2]!
+      points[i * 3 + 1] = segments[i * 2 + 1]!
+      points[i * 3 + 2] = z
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(points, 3))
+    if (this.sectionLines) {
+      this.sectionLines.geometry.dispose()
+      this.sectionLines.geometry = geometry
+    } else {
       this.sectionLines = new THREE.LineSegments(
         geometry,
         new THREE.LineBasicMaterial({ color: SECTION_LINE, depthTest: false, transparent: true }),
@@ -941,21 +947,27 @@ export class Viewport {
       this.scene.add(this.sectionLines)
     }
 
-    const [sx, sy] = this.bounds.size
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(sx * 1.15 || 1, sy * 1.15 || 1),
-      new THREE.MeshBasicMaterial({
-        color: SECTION_LINE,
-        transparent: true,
-        opacity: 0.06,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    )
-    plane.position.set(this.bounds.center[0], this.bounds.center[1], z)
-    this.scene.add(plane)
-    this.cutPlane = plane
+    // The tint is sized to the model, so a new model needs a new one.
+    if (this.cutPlane && this.cutPlaneBounds !== this.bounds) this.clearCutPlane()
+    if (!this.cutPlane) {
+      this.cutPlaneBounds = this.bounds
+      const [sx, sy] = this.bounds.size
+      this.cutPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(sx * 1.15 || 1, sy * 1.15 || 1),
+        new THREE.MeshBasicMaterial({
+          color: SECTION_LINE,
+          transparent: true,
+          opacity: 0.06,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      )
+      this.scene.add(this.cutPlane)
+    }
+    this.cutPlane.position.set(this.bounds.center[0], this.bounds.center[1], z)
   }
+
+  private cutPlaneBounds: Bounds | null = null
 
   clearSection(): void {
     if (this.sectionLines) {
@@ -963,11 +975,16 @@ export class Viewport {
       disposeObject(this.sectionLines)
       this.sectionLines = null
     }
+    this.clearCutPlane()
+  }
+
+  private clearCutPlane(): void {
     if (this.cutPlane) {
       this.scene.remove(this.cutPlane)
       disposeObject(this.cutPlane)
       this.cutPlane = null
     }
+    this.cutPlaneBounds = null
   }
 
   /** Whether the cut face is filled in. Kept so a change of mind can rebuild
@@ -981,25 +998,61 @@ export class Viewport {
     this.setClipZ(this.clipZ)
   }
 
-  /** Hide everything above the given Z so the cutaway reveals the interior. */
+  /** Hide everything above the given Z so the cutaway reveals the interior.
+   *
+   *  Dragging the slider calls this on every input event, so moving the cut
+   *  only moves the plane: the model, the mask and the cap keep their
+   *  materials. Swapping those out per event threw away the cap's shader and
+   *  compiled it again, and the cap blinked for it on every step. */
   setClipZ(z: number | null): void {
     this.clipZ = z
-    this.clearCap()
+    // Findings are marked on the whole surface, and a cut drawn through them
+    // would leave markers floating over the open half of the part.
+    this.syncHighlights()
     const material = this.solid?.material as THREE.MeshStandardMaterial | undefined
-    if (!material) return
-
-    if (z === null) {
+    if (!material || z === null) {
+      this.clearCap()
+      if (material && material.clippingPlanes !== null) {
+        material.clippingPlanes = null
+        material.needsUpdate = true
+      }
       this.renderer.localClippingEnabled = false
-      material.clippingPlanes = null
-      material.needsUpdate = true
       return
     }
 
     this.renderer.localClippingEnabled = true
-    const plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), z)
-    material.clippingPlanes = [plane]
-    material.needsUpdate = true
-    if (this.capped) this.buildCap(plane, z)
+    this.clipPlane.constant = z
+    if (material.clippingPlanes?.[0] !== this.clipPlane) {
+      material.clippingPlanes = [this.clipPlane]
+      material.needsUpdate = true
+    }
+
+    const cap = this.capPlane
+    const current =
+      this.capped &&
+      cap !== null &&
+      this.capGeometry === this.solid!.geometry &&
+      this.capColor === this.surface
+    if (current) {
+      cap.position.z = z
+      return
+    }
+    this.clearCap()
+    if (this.capped) this.buildCap(this.clipPlane, z)
+  }
+
+  /** The one plane the model and the cap's mask are both clipped by. It is
+   *  moved rather than replaced, so a new height costs no recompile. */
+  private readonly clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)
+  private capPlane: THREE.Mesh | null = null
+  /** What the standing cap was built against, so it is rebuilt when the model
+   *  or its colour changes and only moved when the height does. */
+  private capGeometry: THREE.BufferGeometry | null = null
+  private capColor: number | null = null
+
+  /** Findings show over the original mesh, uncut. */
+  private syncHighlights(): void {
+    this.highlightGroup.visible = !this.repairGroup.visible && this.clipZ === null
   }
 
   /** Fill the cut face, so a section through solid material reads as solid.
@@ -1064,6 +1117,11 @@ export class Viewport {
     // The mask has to go before the next frame builds its own.
     cap.onAfterRender = (renderer) => renderer.clearStencil()
     this.capGroup.add(cap)
+    stencil.dispose()
+
+    this.capPlane = cap
+    this.capGeometry = geometry
+    this.capColor = this.surface
   }
 
   private clearCap(): void {
@@ -1076,6 +1134,9 @@ export class Viewport {
       // it; only the cap plane made its own.
       if (mesh.userData.ownsGeometry === true) mesh.geometry.dispose()
     }
+    this.capPlane = null
+    this.capGeometry = null
+    this.capColor = null
   }
 
   /** Suspend orbiting while a tool owns the pointer.
@@ -1204,7 +1265,7 @@ export class Viewport {
     this.repairGroup.visible = show && this.repairGroup.children.length > 0
     this.modelGroup.visible = !this.repairGroup.visible
     // Defect highlights belong to the original; hide them over the repair.
-    this.highlightGroup.visible = !this.repairGroup.visible
+    this.syncHighlights()
   }
 
   clearRepair(): void {
@@ -1215,7 +1276,7 @@ export class Viewport {
     this.repairSolid = null
     this.repairGroup.visible = false
     this.modelGroup.visible = true
-    this.highlightGroup.visible = true
+    this.syncHighlights()
   }
 
   /** Which part is under this point on screen, or null for empty space.
